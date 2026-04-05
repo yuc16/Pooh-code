@@ -152,10 +152,10 @@ class ContextManager:
             blocking_limit=(limit - COMPACT_MAX_OUTPUT_TOKENS) - MANUAL_COMPACT_BUFFER_TOKENS,
         )
 
-    def usage_from_real_input_tokens(self, input_tokens: int | None) -> ContextUsage:
+    def usage_from_real_tokens(self, tokens: int | None) -> ContextUsage:
         limit = self.context_window or get_context_window(self.model)
         return ContextUsage(
-            tokens=input_tokens,
+            tokens=tokens,
             limit=limit,
             auto_compact_threshold=(limit - COMPACT_MAX_OUTPUT_TOKENS) - AUTOCOMPACT_BUFFER_TOKENS,
             blocking_limit=(limit - COMPACT_MAX_OUTPUT_TOKENS) - MANUAL_COMPACT_BUFFER_TOKENS,

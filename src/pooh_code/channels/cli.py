@@ -19,6 +19,8 @@ class CLIChannel(Channel):
             account_id="local",
             peer_id="cli-user",
             chat_id="cli-user",
+            reply_target_id="cli-user",
+            reply_target_type="peer_id",
         )
 
     def send(self, peer_id: str, text: str, **kwargs) -> bool:

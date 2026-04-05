@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import threading
-from datetime import datetime, timezone
 from typing import Any
 
 from .config import AgentConfig
@@ -19,6 +18,7 @@ from .subagent import (
     build_subagent_session_key,
     build_subagent_system_prompt,
 )
+from .time_utils import SHANGHAI_TZ_NAME, shanghai_now_iso
 from .tooling import ToolRegistry
 
 
@@ -76,7 +76,8 @@ class PoohAgent:
             "project_root": str(PROJECT_ROOT),
             "runtime_root": str(RUNTIME_DIR),
             "cwd": os.getcwd(),
-            "utc_time": datetime.now(timezone.utc).isoformat(),
+            "timezone": SHANGHAI_TZ_NAME,
+            "local_time": shanghai_now_iso(),
         }
         parts.append("## Runtime\n" + json.dumps(runtime, ensure_ascii=False, indent=2))
         if self.extra_system_prompt.strip():
@@ -104,12 +105,12 @@ class PoohAgent:
         self.context.context_window = self.config.context_window
         if not pending_user_text:
             usage = self.sessions.get_last_usage(session_key)
-            real_input_tokens = None
+            real_total_tokens = None
             if isinstance(usage, dict):
-                raw = usage.get("input_tokens")
+                raw = usage.get("total_tokens")
                 if isinstance(raw, int):
-                    real_input_tokens = raw
-            return self.context.usage_from_real_input_tokens(real_input_tokens)
+                    real_total_tokens = raw
+            return self.context.usage_from_real_tokens(real_total_tokens)
         messages = self.sessions.load_messages(session_key)
         if pending_user_text:
             messages = [*messages, {"role": "user", "content": pending_user_text}]

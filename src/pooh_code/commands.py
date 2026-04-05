@@ -26,16 +26,32 @@ class CommandProcessor:
         if command == "/help":
             return CommandResult(
                 True,
-                "/help /clear /compact /ctx /sessions /skills /prompt /model [name] /subagent <task> /exit",
+                "/help /clear /new /switch <session_id_prefix> /compact /ctx /sessions /skills /prompt /model [name] /subagent <task> /exit",
             )
         if command == "/clear":
-            new_session_id = self.agent.sessions.clear_session(session_key)
-            return CommandResult(True, f"cleared session; new_session_id={new_session_id}")
+            session_id = self.agent.sessions.clear_session(session_key)
+            return CommandResult(True, f"cleared session_id={session_id}")
+        if command == "/new":
+            session_id = self.agent.sessions.new_session(session_key)
+            return CommandResult(True, f"created and switched to session_id={session_id}")
+        if command == "/switch":
+            if not argument:
+                return CommandResult(True, "usage: /switch <session_id_prefix>")
+            try:
+                target_session_key, session_id = self.agent.sessions.switch_session(argument)
+            except ValueError as exc:
+                return CommandResult(True, str(exc))
+            return CommandResult(
+                True,
+                f"switched to session_id={session_id}",
+                session_key=target_session_key,
+            )
         if command == "/compact":
             compacted = self.agent.compact_session(session_key, force=True)
             return CommandResult(True, "context compacted" if compacted else "nothing to compact")
         if command == "/ctx":
             usage = self.agent.get_context_usage(session_key)
+            session_id = self.agent.sessions.get_session_id(session_key)
             raw_usage = self.agent.sessions.get_last_usage(session_key)
             if isinstance(raw_usage, dict):
                 input_tokens = raw_usage.get("input_tokens")
@@ -43,7 +59,8 @@ class CommandProcessor:
                 total_tokens = raw_usage.get("total_tokens")
                 return CommandResult(
                     True,
-                    "上下文: "
+                    f"session_id={session_id}\n"
+                    "终端显示: "
                     f"{usage.display}\n"
                     f"input_tokens={input_tokens}  "
                     f"output_tokens={output_tokens}  "
@@ -53,7 +70,8 @@ class CommandProcessor:
                 )
             return CommandResult(
                 True,
-                "上下文: "
+                f"session_id={session_id}\n"
+                "终端显示: "
                 f"{usage.display}\n"
                 "input_tokens=unknown  output_tokens=unknown  total_tokens=unknown\n"
                 f"auto_compact={usage.auto_compact_threshold}  "
@@ -61,9 +79,12 @@ class CommandProcessor:
             )
         if command == "/sessions":
             rows = []
-            for item in self.agent.sessions.list_sessions()[:20]:
+            current_session_id = self.agent.sessions.get_session_id(session_key)
+            for item in self.agent.sessions.list_sessions()[:200]:
+                marker = "*" if item["session_id"] == current_session_id else " "
+                channel = item["session_key"].split(":")[2] if ":" in item["session_key"] else "unknown"
                 rows.append(
-                    f"{item['session_id']}  {item['session_key']}  messages={item['message_count']}"
+                    f"{marker} {item['session_id']}  {channel}  messages={item['message_count']}  last_active={item['last_active']}"
                 )
             return CommandResult(True, "\n".join(rows) or "(no sessions)")
         if command == "/skills":

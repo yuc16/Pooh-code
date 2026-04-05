@@ -26,6 +26,8 @@ class InboundMessage:
     peer_id: str
     chat_id: str | None = None
     is_group: bool = False
+    reply_target_id: str | None = None
+    reply_target_type: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 

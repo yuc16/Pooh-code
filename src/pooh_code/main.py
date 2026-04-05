@@ -20,7 +20,8 @@ def _run_cli(agent: PoohAgent) -> int:
     session_key = agent.build_session_key("cli", "local", "cli-user")
     while True:
         usage = agent.get_context_usage(session_key)
-        prompt_text = f"[{usage.display}] You > "
+        session_id = agent.sessions.get_session_id(session_key)
+        prompt_text = f"[{session_id} {usage.display}] You > "
         inbound = channel.receive(prompt_text=prompt_text)
         if inbound is None:
             break
@@ -28,6 +29,8 @@ def _run_cli(agent: PoohAgent) -> int:
         if command.handled:
             if command.text == "__EXIT__":
                 break
+            if command.session_key:
+                session_key = command.session_key
             channel.send(inbound.peer_id, command.text)
             continue
         reply = agent.ask(session_key, inbound.text)
@@ -44,6 +47,7 @@ def _run_cli(agent: PoohAgent) -> int:
 
 def _run_feishu(agent: PoohAgent) -> int:
     lane_manager = LaneManager()
+    commands = CommandProcessor(agent)
     channel = FeishuWebSocketChannel(agent.config.feishu)
     channel.start()
     try:
@@ -57,9 +61,71 @@ def _run_feishu(agent: PoohAgent) -> int:
                 inbound.peer_id,
             )
 
-            def _handle() -> None:
-                reply = agent.ask(session_key, inbound.text)
-                channel.send(inbound.chat_id or inbound.peer_id, reply.text)
+            def _handle(_inbound=inbound, _session_key=session_key) -> None:
+                _target = _inbound.reply_target_id or _inbound.chat_id or _inbound.peer_id
+                _target_type = _inbound.reply_target_type or "chat_id"
+                try:
+                    channel._write_send_log(
+                        {
+                            "event": "feishu_handler",
+                            "stage": "begin",
+                            "session_key": _session_key,
+                            "peer": _inbound.peer_id,
+                            "target": _target,
+                            "target_type": _target_type,
+                            "text": _inbound.text,
+                        }
+                    )
+                    command = commands.handle(_inbound.text, _session_key)
+                    if command.handled:
+                        if command.text and command.text != "__EXIT__":
+                            channel.send(
+                                _target,
+                                command.text,
+                                receive_id_type=_target_type,
+                            )
+                        return
+                    reply = agent.ask(_session_key, _inbound.text)
+                    channel._write_send_log(
+                        {
+                            "event": "feishu_handler",
+                            "stage": "after_ask",
+                            "session_key": _session_key,
+                            "peer": _inbound.peer_id,
+                            "target": _target,
+                            "target_type": _target_type,
+                            "reply_text": reply.text,
+                        }
+                    )
+                    channel.send(
+                        _target,
+                        reply.text,
+                        receive_id_type=_target_type,
+                    )
+                    channel._write_send_log(
+                        {
+                            "event": "feishu_handler",
+                            "stage": "after_send",
+                            "session_key": _session_key,
+                            "peer": _inbound.peer_id,
+                            "target": _target,
+                            "target_type": _target_type,
+                        }
+                    )
+                except Exception as exc:
+                    try:
+                        channel._write_send_log(
+                            {
+                                "event": "feishu_handler_error",
+                                "peer": _inbound.peer_id,
+                                "target": _target,
+                                "target_type": _target_type,
+                                "text": _inbound.text,
+                                "error": str(exc),
+                            }
+                        )
+                    except Exception:
+                        pass
 
             lane_manager.enqueue(session_key, _handle)
             time.sleep(0.01)
@@ -105,8 +171,9 @@ def main(argv: list[str] | None = None) -> int:
         return _run_feishu(agent)
     if args.command == "sessions":
         for item in agent.sessions.list_sessions():
+            marker = "*" if item["active"] else " "
             print(
-                f"{item['session_id']}  {item['session_key']}  messages={item['message_count']}  last_active={item['last_active']}"
+                f"{marker} {item['session_id']}  {item['session_key']}  messages={item['message_count']}  last_active={item['last_active']}"
             )
         return 0
     parser.print_help()
