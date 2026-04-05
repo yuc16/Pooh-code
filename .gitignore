@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+workplace/runtime/cache/
+workplace/runtime/logs/
+workplace/runtime/sessions/
+workplace/runtime/config/settings.json
