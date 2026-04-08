@@ -336,6 +336,42 @@ class SessionStore:
         meta["message_count"] += 1
         self._save_index()
 
+    def delete_session(self, session_key: str, session_id: str) -> str:
+        """删除指定 session_id 的 transcript 目录及索引记录。
+
+        返回删除完成后该 slot 的 active_session_id。如果被删的是最后一条，
+        会自动创建一个新的空白会话以保证 slot 可继续使用。
+        """
+        slot = self._get_slot(session_key)
+        sessions = slot.get("sessions") or {}
+        if session_id not in sessions:
+            raise ValueError(f"session_id not found: {session_id}")
+
+        target_dir = self._session_dir(session_key, session_id)
+        if target_dir.exists():
+            shutil.rmtree(target_dir, ignore_errors=True)
+
+        sessions.pop(session_id, None)
+
+        if not sessions:
+            # 最后一条被删，创建一个新的空白会话保持 slot 可用。
+            meta = self._create_session_meta()
+            new_id = meta["session_id"]
+            sessions[new_id] = meta
+            slot["active_session_id"] = new_id
+            self._ensure_session_dir(session_key, new_id)
+        elif slot.get("active_session_id") == session_id:
+            # 被删的是当前会话，切到剩余里最新活跃的那条。
+            remaining = sorted(
+                sessions.items(),
+                key=lambda kv: kv[1].get("last_active", ""),
+                reverse=True,
+            )
+            slot["active_session_id"] = remaining[0][0]
+
+        self._save_index()
+        return slot["active_session_id"]
+
     def clear_session(self, session_key: str) -> str:
         session_id = self.ensure_session(session_key)
         self._transcript_path(session_key, session_id).write_text("", encoding="utf-8")

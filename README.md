@@ -142,6 +142,75 @@ CLI prompt 会实时显示当前 `session_id` 和最近一次真实请求的 `to
 
 回发消息时，`pooh-code` 会优先使用收到事件里的 `message_id` 直接回复原消息；只有拿不到 `message_id` 时，才会退回按 `chat_id` / `open_id` 新发消息。
 
+## Web 前端
+
+项目自带一个零依赖的 Web 前端，代码在 [src/frontend](/Users/wangyc/Desktop/projects/Pooh-code/src/frontend)：
+
+- [src/frontend/server.py](/Users/wangyc/Desktop/projects/Pooh-code/src/frontend/server.py)：用 Python 标准库 `http.server` 包一层 `PoohAgent` + `CommandProcessor`，不引入新依赖
+- [src/frontend/static/index.html](/Users/wangyc/Desktop/projects/Pooh-code/src/frontend/static/index.html) / [style.css](/Users/wangyc/Desktop/projects/Pooh-code/src/frontend/static/style.css) / [app.js](/Users/wangyc/Desktop/projects/Pooh-code/src/frontend/static/app.js)：原生 HTML/CSS/JS，无需构建
+
+启动方式：
+
+```bash
+PYTHONPATH=src uv run python -m frontend.server
+# 默认监听 http://127.0.0.1:8787
+# 可选参数：--host 0.0.0.0 --port 8787 --config path/to/settings.json
+```
+
+Web 端固定使用 `session_key = agent:main:web:local:web-user`，与 CLI、飞书 channel 相互隔离，不会互相污染会话。
+
+### 界面功能
+
+- 浅色风格，左侧 sidebar + 右侧主聊天区的经典两栏布局
+- 左侧：新建会话、刷新、快捷命令（`/help` `/ctx` `/sessions` `/skills` `/compact` `/clear`）、会话列表
+- 会话列表只显示 web channel 下的会话（不混入 cli / feishu），点击任一条即可**切换并保留历史记录**
+- 每个会话条目 hover 时右侧出现 `✕` 删除按钮，点击会弹 confirm 二次确认，确认后同步删除 [workplace/runtime/sessions/main/web/&lt;session_id&gt;/transcript.jsonl](/Users/wangyc/Desktop/projects/Pooh-code/workplace/runtime/sessions/main/web) 和索引记录；如果删的是最后一条会自动新建一条空白会话
+- 顶栏：状态灯（就绪 / 思考中 / 错误）、实时 context usage（如 `1019/258k`）、当前 model 徽章
+- 主聊天区：user / assistant / system 三种气泡，支持正常上下滚动（老版本的 flex `min-height` bug 已修）
+- 输入框：Enter 发送，Shift+Enter 换行，textarea 高度自动增长
+- 输入以 `/` 开头走 `/api/command` 命令路径，命令回显和输出会作为 system 气泡贴在聊天区里
+- 当 `reply.compacted` 为真时，会插入一条 `[autocompact -> xxx/258k]` 系统气泡
+
+### 流式输出 / 思考过程 / 工具调用展示
+
+非命令消息默认走 SSE 流式接口 `POST /api/chat/stream`，前端用 `fetch` + `ReadableStream` 逐帧解析，实时增量渲染，不用等整轮回复结束：
+
+底层 Codex SSE 事件被转成下列业务事件（见 [src/pooh_code/openai_codex.py](/Users/wangyc/Desktop/projects/Pooh-code/src/pooh_code/openai_codex.py) 的 `_consume_sse` 和 [src/pooh_code/agent.py](/Users/wangyc/Desktop/projects/Pooh-code/src/pooh_code/agent.py) 的 `PoohAgent.ask_stream`）：
+
+| 事件 | 含义 |
+| --- | --- |
+| `text_delta` | 助手正文的 token 级增量，前端按字符追加，尾部带闪烁光标 |
+| `tool_use_started` | 模型开始调用工具，前端立即插入一张 tool-block 卡片（徽章 `TOOL`、工具名、状态 `调用中…`） |
+| `tool_use_done` | 工具参数就绪，卡片里填充 `INPUT` JSON，状态切到 `执行中…` |
+| `tool_result` | 本地 `ToolRegistry.execute` 跑完，卡片里追加 `OUTPUT`，状态切到 `完成`；如果是错误输出会变红色并显示 `ERROR` + `失败` |
+| `turn_start` | 多轮 tool_use 时在两轮之间插入一条灰色 `· turn N ·` 分隔线 |
+| `compacted` | 触发了自动 compact，追加 `[autocompact -> xxx/258k]` 系统气泡 |
+| `done` | 当前轮全部结束，前端置 `finished=true` 跳出 reader 循环 |
+| `state` | 最后一帧带上新的 `session_id` / `usage`，用来同步右上角 |
+| `error` | 任意异常，前端置错误状态并写系统气泡 |
+
+tool-block 卡片的 `INPUT` / `OUTPUT` 都是可折叠的代码块，点击卡片头即可收起，方便长工具输出不挤占视线。
+
+SSE 连接使用 `Connection: close` 并在服务端强制 `self.close_connection = True`，前端在收到 `done` 后主动 `reader.cancel()`，避免 reader 挂住导致输入框卡死。
+
+### HTTP API
+
+| Method | Path | 作用 |
+| --- | --- | --- |
+| GET  | `/api/state` | 当前 `session_id` / `model` / `usage` |
+| GET  | `/api/messages` | 载入当前会话 transcript（已扁平化为纯文本） |
+| GET  | `/api/sessions` | 列出当前 web channel 下的所有会话 |
+| POST | `/api/chat` | 同步调用 `agent.ask(session_key, text)`，一次返回完整回复 |
+| POST | `/api/chat/stream` | **SSE 流式**接口，调用 `agent.ask_stream`，推送 `text_delta` / `tool_use_*` / `tool_result` / `done` 等事件 |
+| POST | `/api/command` | 走 `CommandProcessor`，支持 `/help` `/ctx` `/skills` `/compact` 等 |
+| POST | `/api/session/new` | 新建一个 `session_id` |
+| POST | `/api/session/switch` | 按 `session_id` 前缀切换（只在当前 web channel 的 slot 内匹配） |
+| POST | `/api/session/clear` | 清空当前会话 transcript |
+| POST | `/api/session/delete` | 删除指定 `session_id`，同步 `shutil.rmtree` 掉磁盘上的 transcript 目录；若删的是最后一条会自动创建新会话 |
+| POST | `/api/session/compact` | 强制触发一次 compact |
+
+普通接口返回 JSON，形如 `{"ok": true, ...}`，失败时为 `{"ok": false, "error": "..."}`；`/api/chat/stream` 返回 `text/event-stream`，每帧 `data: {"type": "...", ...}\n\n`，流末尾会有一行 `data: [DONE]\n\n`。
+
 ## 当前实现边界
 
 现在这版已经覆盖了 Claude Code 最核心的运行链路，但还不是 1:1 完整复刻。已经做好的部分是：

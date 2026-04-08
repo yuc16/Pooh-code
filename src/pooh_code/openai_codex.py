@@ -64,6 +64,7 @@ class _MessagesAPI:
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
+        on_event: Any = None,
         **_: Any,
     ) -> MessageResponse:
         instructions, input_items = _convert_messages(messages, system)
@@ -95,6 +96,7 @@ class _MessagesAPI:
                 body=body,
                 timeout_seconds=self._client.timeout_seconds,
                 verify_ssl=self._client.verify_ssl,
+                on_event=on_event,
             )
         except RuntimeError as exc:
             should_retry = (
@@ -116,6 +118,7 @@ class _MessagesAPI:
                 body=body,
                 timeout_seconds=self._client.timeout_seconds,
                 verify_ssl=self._client.verify_ssl,
+                on_event=on_event,
             )
 
         blocks: list[Any] = []
@@ -235,6 +238,7 @@ def _request_codex(
     body: dict[str, Any],
     timeout_seconds: float,
     verify_ssl: bool,
+    on_event: Any = None,
 ) -> tuple[str, list[dict[str, Any]], str, dict[str, Any] | None]:
     try:
         return _request_codex_once(
@@ -243,6 +247,7 @@ def _request_codex(
             body=body,
             timeout_seconds=timeout_seconds,
             verify_ssl=verify_ssl,
+            on_event=on_event,
         )
     except Exception as exc:
         if "CERTIFICATE_VERIFY_FAILED" not in str(exc) or not verify_ssl:
@@ -253,6 +258,7 @@ def _request_codex(
             body=body,
             timeout_seconds=timeout_seconds,
             verify_ssl=False,
+            on_event=on_event,
         )
 
 
@@ -263,23 +269,33 @@ def _request_codex_once(
     body: dict[str, Any],
     timeout_seconds: float,
     verify_ssl: bool,
+    on_event: Any = None,
 ) -> tuple[str, list[dict[str, Any]], str, dict[str, Any] | None]:
     with httpx.Client(timeout=timeout_seconds, verify=verify_ssl) as client:
         with client.stream("POST", url, headers=headers, json=body) as response:
             if response.status_code != 200:
                 raw = response.read().decode("utf-8", "ignore")
                 raise RuntimeError(_friendly_error(response.status_code, raw))
-            return _consume_sse(response)
+            return _consume_sse(response, on_event=on_event)
 
 
 def _consume_sse(
     response: httpx.Response,
+    on_event: Any = None,
 ) -> tuple[str, list[dict[str, Any]], str, dict[str, Any] | None]:
     content = ""
     tool_calls: list[dict[str, Any]] = []
     tool_call_buffers: dict[str, dict[str, Any]] = {}
     finish_reason = "completed"
     usage: dict[str, Any] | None = None
+
+    def _emit(kind: str, payload: dict[str, Any]) -> None:
+        if on_event is None:
+            return
+        try:
+            on_event(kind, payload)
+        except Exception:
+            pass
 
     for event in _iter_sse(response):
         event_type = event.get("type")
@@ -293,8 +309,18 @@ def _consume_sse(
                         "name": item.get("name") or "",
                         "arguments": item.get("arguments") or "",
                     }
+                    _emit(
+                        "tool_use_started",
+                        {
+                            "call_id": call_id,
+                            "name": item.get("name") or "",
+                        },
+                    )
         elif event_type == "response.output_text.delta":
-            content += event.get("delta") or ""
+            delta = event.get("delta") or ""
+            content += delta
+            if delta:
+                _emit("text_delta", {"text": delta})
         elif event_type == "response.function_call_arguments.delta":
             call_id = event.get("call_id")
             if call_id and call_id in tool_call_buffers:
@@ -315,12 +341,22 @@ def _consume_sse(
                     parsed_args = json.loads(raw_args)
                 except Exception:
                     parsed_args = {"raw": raw_args}
+                full_id = f"{call_id}|{buffer.get('id') or item.get('id') or 'fc_0'}"
                 tool_calls.append(
                     {
-                        "id": f"{call_id}|{buffer.get('id') or item.get('id') or 'fc_0'}",
+                        "id": full_id,
                         "name": buffer.get("name") or item.get("name") or "",
                         "input": parsed_args,
                     }
+                )
+                _emit(
+                    "tool_use_done",
+                    {
+                        "call_id": call_id,
+                        "id": full_id,
+                        "name": buffer.get("name") or item.get("name") or "",
+                        "input": parsed_args,
+                    },
                 )
         elif event_type == "response.completed":
             response_obj = event.get("response") or {}

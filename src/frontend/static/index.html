@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pooh Code</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-title">Pooh Code</div>
+        <div class="brand-sub" id="model-label">—</div>
+      </div>
+
+      <div class="side-actions">
+        <button class="btn primary" id="btn-new">+ 新会话</button>
+        <button class="btn" id="btn-refresh">刷新</button>
+      </div>
+
+      <div class="side-section">
+        <div class="side-header">快捷命令</div>
+        <div class="cmd-row">
+          <button class="chip" data-cmd="/help">/help</button>
+          <button class="chip" data-cmd="/ctx">/ctx</button>
+          <button class="chip" data-cmd="/sessions">/sessions</button>
+          <button class="chip" data-cmd="/skills">/skills</button>
+          <button class="chip" data-cmd="/compact">/compact</button>
+          <button class="chip" data-cmd="/clear">/clear</button>
+        </div>
+      </div>
+
+      <div class="side-section">
+        <div class="side-header">所有会话</div>
+        <ul class="session-list" id="session-list"></ul>
+      </div>
+
+      <div class="side-footer">
+        <div class="meta-row"><span>session</span><span id="session-id">—</span></div>
+        <div class="meta-row"><span>usage</span><span id="usage-label">—</span></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <span class="dot" id="status-dot"></span>
+          <span id="status-text">就绪</span>
+        </div>
+        <div class="topbar-right">
+          <span class="pill" id="context-pill">--/--</span>
+          <span class="pill model-pill" id="model-pill">—</span>
+        </div>
+      </header>
+
+      <section class="messages" id="messages">
+        <div class="empty" id="empty-hint">
+          <div class="empty-title">开始和 Pooh Code 对话</div>
+          <div class="empty-sub">支持 <code>/help</code>、<code>/new</code>、<code>/compact</code> 等命令</div>
+        </div>
+      </section>
+
+      <form class="composer" id="composer">
+        <textarea
+          id="input"
+          rows="1"
+          placeholder="输入消息，Enter 发送 / Shift+Enter 换行，以 / 开头执行命令"
+          autocomplete="off"
+        ></textarea>
+        <button type="submit" class="btn primary" id="btn-send">发送</button>
+      </form>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

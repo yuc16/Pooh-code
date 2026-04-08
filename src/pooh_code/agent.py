@@ -188,6 +188,141 @@ class PoohAgent:
         finally:
             self._session_local.session_key = previous
 
+    def ask_stream(
+        self,
+        session_key: str,
+        user_text: str,
+        on_event: Any,
+    ) -> AgentReply:
+        """Streaming variant of `ask`.
+
+        `on_event(kind, payload)` is called with:
+          - ("text_delta", {"text": str})
+          - ("tool_use_started", {"call_id": str, "name": str})
+          - ("tool_use_done", {"id": str, "name": str, "input": dict})
+          - ("tool_result", {"tool_use_id": str, "name": str, "content": str, "is_error": bool})
+          - ("turn_start", {"turn": int})
+          - ("compacted", {"display": str})
+          - ("done", {"text": str, "session_id": str, "compacted": bool})
+        """
+
+        def _emit(kind: str, payload: dict[str, Any]) -> None:
+            try:
+                on_event(kind, payload)
+            except Exception:
+                pass
+
+        self._session_local.session_key = session_key
+        self.context.model = self.config.model
+        self.context.context_window = self.config.context_window
+
+        self.sessions.append_message(session_key, "user", user_text)
+
+        compacted = self.compact_session(
+            session_key,
+            user_text_for_prompt=user_text,
+            force=False,
+        )
+        if compacted:
+            _emit(
+                "compacted",
+                {"display": self.get_context_usage(session_key).display},
+            )
+
+        final_text = ""
+        for turn_idx in range(self.config.max_turns):
+            messages = self.sessions.load_messages(session_key)
+            system_prompt = self.build_system_prompt(user_text)
+            if self.context.should_compact(messages, system_prompt):
+                self.compact_session(
+                    session_key, user_text_for_prompt=user_text, force=True
+                )
+                messages = self.sessions.load_messages(session_key)
+                _emit(
+                    "compacted",
+                    {"display": self.get_context_usage(session_key).display},
+                )
+
+            _emit("turn_start", {"turn": turn_idx + 1})
+
+            response = self.client.messages.create(
+                model=self.config.model,
+                system=system_prompt,
+                messages=messages,
+                tools=self.tools.specs(),
+                max_tokens=4096,
+                on_event=on_event,
+            )
+            if response.usage:
+                self.sessions.set_last_usage(session_key, response.usage)
+
+            assistant_blocks: list[dict[str, Any]] = []
+            tool_result_blocks: list[dict[str, Any]] = []
+            for block in response.content:
+                if getattr(block, "type", None) == "text":
+                    text = getattr(block, "text", "")
+                    if text:
+                        final_text += text
+                        assistant_blocks.append({"type": "text", "text": text})
+                elif getattr(block, "type", None) == "tool_use":
+                    assistant_blocks.append(
+                        {
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        }
+                    )
+                    result = self.tools.execute(block.name, block.input)
+                    is_error = result.startswith("Tool ") or result.startswith(
+                        "Unknown tool"
+                    )
+                    _emit(
+                        "tool_result",
+                        {
+                            "tool_use_id": block.id,
+                            "name": block.name,
+                            "content": result,
+                            "is_error": is_error,
+                        },
+                    )
+                    tool_result_blocks.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result,
+                            "is_error": is_error,
+                        }
+                    )
+
+            if assistant_blocks:
+                self.sessions.append_message(session_key, "assistant", assistant_blocks)
+
+            if response.stop_reason != "tool_use":
+                break
+
+            if tool_result_blocks:
+                self.sessions.append_message(session_key, "user", tool_result_blocks)
+
+        if not final_text.strip():
+            final_text = "(empty response)"
+        session_id = self.sessions.get_session_id(session_key)
+        _emit(
+            "done",
+            {
+                "text": final_text.strip(),
+                "session_id": session_id,
+                "compacted": compacted,
+            },
+        )
+        return AgentReply(
+            text=final_text.strip(),
+            session_key=session_key,
+            session_id=session_id,
+            model=self.config.model,
+            compacted=compacted,
+        )
+
     def ask(self, session_key: str, user_text: str) -> AgentReply:
         self._session_local.session_key = session_key
         self.context.model = self.config.model
