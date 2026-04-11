@@ -19,17 +19,36 @@
 - [src/pooh_code](/Users/wangyc/Desktop/projects/Pooh-code/src/pooh_code)：核心实现
 - [workplace/runtime](/Users/wangyc/Desktop/projects/Pooh-code/workplace/runtime)：运行时目录
 
-`workplace/runtime/` 里只放运行时内容：
+`workplace/` 下有两个平级的子目录,各司其职：
 
-- `config/settings.json`：本地配置
-- `sessions/`：主 agent 和子 agent transcript
-- `skills/`：本地 skills
-- `SOUL.md` / `IDENTITY.md` / `TOOLS.md` 等：bootstrap 提示词文件
+- `workplace/runtime/` —— 运行时状态,本地私有,不推到任何远端
+  - `config/settings.json`：本地配置
+  - `sessions/`：主 agent 和子 agent transcript
+  - `skills/`：本地 skills(`SKILL.md` 作为配置由主仓库 main 分支跟踪)
+  - `SOUL.md` / `IDENTITY.md` / `TOOLS.md` 等：bootstrap 提示词文件
+- `workplace/output/` —— **agent 产出专区**,里面有一个独立的第二 git 仓库,把 agent 生成的文件推到 GitHub 的 `temp` 分支,详见下面「双仓库架构」
 
 其中 `sessions/<agent_id>/` 下面会按渠道分目录，例如：
 
 - `sessions/main/cli/<session_id>/transcript.jsonl`
 - `sessions/main/feishu/<session_id>/transcript.jsonl`
+
+### 双仓库架构
+
+本项目的 git 被**物理拆成两个仓库**,解决"agent 频繁产出"和"人类维护源码"互相污染的问题:
+
+| 仓库 | 位置 | 分支 | 谁在写 | 写什么 |
+| --- | --- | --- | --- | --- |
+| 主仓库 | 项目根 `.git/` | `main` | 人类开发者(手动) | `src/`、`README.md`、`workplace/runtime/skills/*/SKILL.md` 等源码/配置 |
+| 产出仓库 | `workplace/output/.git/` | `temp` | agent(通过 `github-push` skill) | agent 任务执行时产出的任何文件 |
+
+两个仓库的 `origin` 指向**同一个 GitHub repo**,但 `main` 和 `temp` 分支历史**完全独立**(`temp` 是 orphan 起源,无共同祖先)。好处:
+
+- main 分支历史永远干净,只有人类的源码提交
+- agent 的产出在云端 `temp` 分支随时可查,不污染任何正式分支
+- **完全兼容沙箱**:`workplace/output/.git/` 整个在 workplace 内,agent 读写 git 对象文件不需要任何沙箱豁口；反过来,agent 物理上也碰不到项目根的 `.git/`(沙箱直接拒),杜绝误推 main 的可能
+
+主仓库的 `.gitignore` 把 `workplace/output/` 整个忽略,避免嵌套 repo 被主仓库当成 untracked 或 submodule 误处理。
 
 ## 启动方式
 
@@ -149,7 +168,7 @@ Skills 是一种"按需加载的操作手册"。每个 skill 是 [workplace/runt
 
 目前已有的 skill：
 
-- **github-push** —— 把本地改动统一推送到 GitHub 同名远程仓库的 `temp` 分支，自动处理 commit、remote 创建、冲突检测
+- **github-push** —— 把 `workplace/output/` 里 agent 自己产出的文件 commit 并推送到 GitHub 的 `temp` 分支(独立于主仓库 main 分支)。**只操作产出仓库,不触碰项目源码**,详见上面「双仓库架构」
 
 注意：`use_skill` 的 `enum` 在 agent 构造时固化，新增 skill 需要重启进程才会被发现。
 
