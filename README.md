@@ -345,31 +345,3 @@ bash: echo x > /Users/wangyc/Desktop/x.txt
 read_file: /etc/passwd
 # Error: path escapes workplace sandbox: /etc/passwd
 ```
-
-## 当前实现边界
-
-现在这版已经覆盖了 Claude Code 最核心的运行链路，但还不是 1:1 完整复刻。已经做好的部分是：
-
-- 主 agent 循环
-- 工具调用
-- 会话持久化
-- 上下文显示
-- 上下文压缩
-- 搜索型子 agent
-- 飞书长连接
-- ChatGPT OAuth
-
-还没有完整复刻的部分主要是：
-
-- Ink/TUI 级别的复杂终端 UI
-- IDE bridge
-- MCP 全量生态
-- 完整多代理编排与后台任务系统
-- Claude Code 全量 slash commands
-
-如果继续往下补，建议下一阶段优先做：
-
-1. 更完整的 `spawn_agent` 参数和后台执行
-2. 更接近 cc 的 compact prompt 和恢复策略
-3. 权限模型与审批流
-4. `/review`、`/commit`、`/resume` 这类高频命令
