@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -15,7 +18,7 @@ from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from duckduckgo_search import DDGS
 
 from .models import ToolSpec
-from .paths import PROJECT_ROOT
+from .paths import WORKPLACE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +48,82 @@ def _truncate(text: str, limit: int = MAX_TOOL_OUTPUT) -> str:
     return text[:limit] + f"\n\n[truncated, total_chars={len(text)}]"
 
 
-def _safe_project_path(raw: str) -> Path:
-    base = PROJECT_ROOT.resolve()
-    target = (base / raw).resolve() if not os.path.isabs(raw) else Path(raw).resolve()
-    if not str(target).startswith(str(base)):
-        raise ValueError(f"path escapes project root: {raw}")
+def _safe_workplace_path(raw: str) -> Path:
+    """把相对/绝对路径约束在 workplace 沙箱内，越界抛错。"""
+    base = WORKPLACE_DIR.resolve()
+    target = Path(raw) if os.path.isabs(raw) else base / raw
+    target = target.resolve()
+    try:
+        target.relative_to(base)
+    except ValueError as exc:
+        raise ValueError(f"path escapes workplace sandbox: {raw}") from exc
     return target
+
+
+_SANDBOX_PROFILE_TEMPLATE = """(version 1)
+(allow default)
+(deny file-write*)
+(allow file-write*
+    (subpath "{workplace}")
+    (subpath "/tmp")
+    (subpath "/private/tmp")
+    (subpath "/private/var/folders")
+    (subpath "/var/folders")
+    (literal "/dev/null")
+    (literal "/dev/dtracehelper")
+    (literal "/dev/tty")
+    (literal "/dev/stdout")
+    (literal "/dev/stderr"))
+"""
+
+
+@lru_cache(maxsize=1)
+def _bwrap_available() -> bool:
+    return shutil.which("bwrap") is not None
+
+
+def _build_sandboxed_bash(command: str, chdir: Path) -> tuple[list[str] | str, bool]:
+    """按平台选择沙箱实现：
+
+    - macOS → sandbox-exec + 自定义 profile(B 层)
+    - Linux + bwrap 可用 → bubblewrap 新 mount namespace(B 层)
+    - 其他 → 原样执行,只有 A 层(路径校验 + cwd 约束)
+
+    返回 (argv_or_str, use_shell)。
+    """
+    workplace = str(WORKPLACE_DIR.resolve())
+
+    if sys.platform == "darwin":
+        profile = _SANDBOX_PROFILE_TEMPLATE.format(workplace=workplace)
+        return ["sandbox-exec", "-p", profile, "/bin/sh", "-c", command], False
+
+    if sys.platform.startswith("linux") and _bwrap_available():
+        # bwrap 创建新 mount namespace:
+        # - /usr /bin /sbin /lib /lib64 /etc 只读绑定(系统工具链)
+        # - workplace 读写绑定
+        # - /tmp 用私有 tmpfs 隔离
+        # - 保留网络(--share-net),方便 web_search/pip 等
+        return [
+            "bwrap",
+            "--ro-bind", "/usr", "/usr",
+            "--ro-bind-try", "/bin", "/bin",
+            "--ro-bind-try", "/sbin", "/sbin",
+            "--ro-bind-try", "/lib", "/lib",
+            "--ro-bind-try", "/lib64", "/lib64",
+            "--ro-bind-try", "/etc", "/etc",
+            "--bind", workplace, workplace,
+            "--tmpfs", "/tmp",
+            "--proc", "/proc",
+            "--dev", "/dev",
+            "--unshare-user-try",
+            "--unshare-pid",
+            "--share-net",
+            "--die-with-parent",
+            "--chdir", str(chdir),
+            "/bin/sh", "-c", command,
+        ], False
+
+    return command, True
 
 
 class ToolRegistry:
@@ -329,11 +402,12 @@ class ToolRegistry:
             padded = f" {lowered} "
             if any(token in padded or token in command for token in denied_tokens):
                 raise ValueError("readonly bash mode blocks mutating commands")
-        workdir = _safe_project_path(cwd)
+        workdir = _safe_workplace_path(cwd)
+        argv, use_shell = _build_sandboxed_bash(command, workdir)
         completed = subprocess.run(
-            command,
+            argv,
             cwd=workdir,
-            shell=True,
+            shell=use_shell,
             text=True,
             capture_output=True,
             timeout=timeout,
@@ -355,7 +429,7 @@ class ToolRegistry:
     def _read_file(
         self, path: str, start_line: int | None = None, end_line: int | None = None
     ) -> str:
-        file_path = _safe_project_path(path)
+        file_path = _safe_workplace_path(path)
         text = file_path.read_text(encoding="utf-8")
         if start_line or end_line:
             lines = text.splitlines()
@@ -368,7 +442,7 @@ class ToolRegistry:
         return text
 
     def _write_file(self, path: str, content: str) -> str:
-        file_path = _safe_project_path(path)
+        file_path = _safe_workplace_path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8")
         return f"wrote {len(content)} chars to {file_path}"
@@ -376,7 +450,7 @@ class ToolRegistry:
     def _edit_file(
         self, path: str, old_text: str, new_text: str, replace_all: bool = False
     ) -> str:
-        file_path = _safe_project_path(path)
+        file_path = _safe_workplace_path(path)
         text = file_path.read_text(encoding="utf-8")
         count = text.count(old_text)
         if count == 0:
@@ -391,7 +465,7 @@ class ToolRegistry:
         return f"updated {file_path}; replacements={replacements}"
 
     def _list_dir(self, path: str = ".") -> str:
-        dir_path = _safe_project_path(path)
+        dir_path = _safe_workplace_path(path)
         items = []
         for child in sorted(dir_path.iterdir()):
             suffix = "/" if child.is_dir() else ""
@@ -400,14 +474,14 @@ class ToolRegistry:
 
     def _glob(self, pattern: str) -> str:
         matches = sorted(
-            str(path.relative_to(PROJECT_ROOT))
-            for path in PROJECT_ROOT.glob(pattern)
+            str(path.relative_to(WORKPLACE_DIR))
+            for path in WORKPLACE_DIR.glob(pattern)
             if path.is_file()
         )
         return "\n".join(matches[:500]) or "(no matches)"
 
     def _grep(self, pattern: str, path: str = ".") -> str:
-        search_root = _safe_project_path(path)
+        search_root = _safe_workplace_path(path)
         command = [
             "rg",
             "-n",

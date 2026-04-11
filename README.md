@@ -292,6 +292,60 @@ gpt-5 / Codex 这类推理模型内部会产生很长的思维链（chain-of-tho
 
 前端 Web UI 会在助手气泡里以虚线框的形式实时展示推理过程（`REASONING` 标签）。
 
+## 工具沙箱
+
+所有内置工具（`bash` / `read_file` / `write_file` / `edit_file` / `list_dir` / `glob` / `grep`）都被强制约束在 [workplace/](/Users/wangyc/Desktop/projects/Pooh-code/workplace) 目录内，目的是把 agent 的可写范围收敛到运行时区域，避免误伤项目源码或系统文件。
+
+实现分两层：
+
+### A 层：Python 路径校验（跨平台）
+
+在 [tooling.py](/Users/wangyc/Desktop/projects/Pooh-code/src/pooh_code/tooling.py) 里，所有涉及路径的工具都走 `_safe_workplace_path()`：它把相对路径拼到 `WORKPLACE_DIR`，把绝对路径 `resolve()` 后检查是否仍在 workplace 子树内，越界直接抛 `ValueError`。`bash` 的 `cwd` 参数也走同一校验，默认 `.` 解析为 workplace 根。
+
+这一层是纯 Python 实现，任何平台都生效，但**只能防住工具参数层面**的越界——bash 命令串内部的 `cat /etc/passwd`、`cd /` 等它拦不住。
+
+### B 层：OS 级沙箱（macOS + Linux）
+
+`bash` 工具在执行时会根据当前操作系统额外套一层 OS 级沙箱：
+
+| 平台 | 机制 | 依赖 |
+| --- | --- | --- |
+| macOS | `sandbox-exec -p <profile>` | 系统自带 |
+| Linux | `bwrap`（bubblewrap）新 mount namespace | `apt install bubblewrap` / `dnf install bubblewrap` |
+| 其他 | 无 B 层，降级到纯 A 层 | — |
+
+**macOS profile** 策略：
+- `allow default` 起手 → `deny file-write*` → 只允许对 workplace、`/tmp`、`/var/folders`（Python tempfile 默认位置）、`/dev/null` 等写入
+- 读权限全放行（不然 `python`、`git`、`rg` 等系统工具跑不起来）
+- 网络放行（`web_search` / `pip` 需要）
+
+**Linux bwrap** 策略：
+- 只读绑定 `/usr /bin /sbin /lib /lib64 /etc`（提供系统工具链）
+- 读写绑定 workplace
+- `/tmp` 用私有 tmpfs 隔离
+- `--unshare-user-try --unshare-pid --share-net --die-with-parent`
+- `--chdir` 到 bash 工具请求的 cwd
+
+注意事项：
+- 部分 Linux 发行版（如 Debian 11+）默认禁用非特权 user namespace，bwrap 会启动失败。可以 `sysctl kernel.unprivileged_userns_clone=1` 打开，或回落到纯 A 层。
+- 读权限没有严格隔离是有意为之——完全隔离读操作会让 Python/Git 等基础工具失效。如果未来要跑不信任的 skill，建议改用 Docker 方案。
+- 沙箱对 agent 自己发起的 `read_file` 也生效：想读项目源码（比如 `src/pooh_code/*.py`）会被 A 层直接拒。如果要让 agent 读源码，需要先把相关文件软链接或复制到 workplace。
+
+### 实测
+
+```bash
+# workplace 内写入 → OK
+bash: echo hi > runtime/cache/x.txt
+
+# workplace 外写入 → 被内核拒绝
+bash: echo x > /Users/wangyc/Desktop/x.txt
+# stderr: Operation not permitted
+
+# 路径参数越界 → A 层抛错
+read_file: /etc/passwd
+# Error: path escapes workplace sandbox: /etc/passwd
+```
+
 ## 当前实现边界
 
 现在这版已经覆盖了 Claude Code 最核心的运行链路，但还不是 1:1 完整复刻。已经做好的部分是：
