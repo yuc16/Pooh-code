@@ -7,7 +7,7 @@ from typing import Any
 
 from .config import AgentConfig
 from .context import ContextManager, ContextUsage
-from .models import AgentReply
+from .models import AgentReply, ToolSpec, ToolSpec
 from .openai_codex import PoohCodexClient
 from .paths import BOOTSTRAP_FILES, PROJECT_ROOT, RUNTIME_DIR, ensure_runtime_dirs
 from .session_store import SessionStore
@@ -52,6 +52,36 @@ class PoohAgent:
             enable_subagents=enable_subagents,
             spawn_agent_callback=self._spawn_agent,
         )
+        self._register_skill_tool()
+
+    def _register_skill_tool(self) -> None:
+        self.skills.discover()
+        available = self.skills.list_names()
+        if not available:
+            return
+        names_hint = ", ".join(available)
+        self.tools.register_tool(
+            ToolSpec(
+                name="use_skill",
+                description=(
+                    "加载某个 skill 的完整指令。当用户意图匹配 system prompt 中 "
+                    "## Skills 列表里某条 description 时,先调用此工具拿到完整步骤再执行。"
+                    f"当前可用 skill: {names_hint}。"
+                ),
+                input_schema={
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "skill 名字,例如 github-push",
+                            "enum": available,
+                        }
+                    },
+                },
+            ),
+            lambda name: self.skills.get_body(name),
+        )
 
     def build_session_key(
         self, channel: str, account_id: str, peer_id: str, agent_id: str | None = None
@@ -66,7 +96,7 @@ class PoohAgent:
         return "agent:" + ":".join(parts)
 
     def build_system_prompt(self, user_text: str) -> str:
-        parts = [self._load_bootstrap_files(), self.skills.render_for_prompt(user_text)]
+        parts = [self._load_bootstrap_files(), self.skills.render_metadata_for_prompt()]
         runtime = {
             "agent_name": self.config.name,
             "agent_id": self.agent_id,

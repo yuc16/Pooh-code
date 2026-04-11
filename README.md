@@ -128,6 +128,31 @@ CLI prompt 会实时显示当前 `session_id` 和最近一次真实请求的 `to
 - 优先使用 `glob` / `grep` / `read_file` / 只读 `bash`
 - 返回压缩后的结论给主 agent
 
+## Skills
+
+Skills 是一种"按需加载的操作手册"。每个 skill 是 [workplace/runtime/skills/](/Users/wangyc/Desktop/projects/Pooh-code/workplace/runtime/skills) 下的一个子目录，目录里有一个 `SKILL.md`，包含：
+
+- frontmatter（`name`、`description`）
+- markdown 正文，描述具体步骤和边界
+
+加载机制做了**两级递进**，让 skill 的触发对用户**可见**：
+
+1. **元数据层**：agent 启动时扫描所有 skill，把 `name` + `description` 作为一个列表塞进 system prompt（见 [skills.py](/Users/wangyc/Desktop/projects/Pooh-code/src/pooh_code/skills.py) 的 `render_metadata_for_prompt`）。完整正文**不**进 system prompt，避免无谓占用 context。
+2. **工具层**：注册一个 `use_skill` 工具（见 [agent.py](/Users/wangyc/Desktop/projects/Pooh-code/src/pooh_code/agent.py) 的 `_register_skill_tool`），参数是 skill 名字，返回对应 `SKILL.md` 的正文。`enum` 会锁定到当前所有已发现的 skill 名字，防止模型瞎填。
+
+运行时流程：
+
+1. 用户说"推送到 github"
+2. 模型看到 system prompt 里的 skill 列表，命中 `github-push` 的 description
+3. 模型调用 `use_skill(name="github-push")` —— **前端工具调用卡片会展示这次调用**，这就是用户能看到的"skill 被用了"的信号
+4. 拿到 body 后模型按指令陆续调用 `bash` 等工具完成实际工作
+
+目前已有的 skill：
+
+- **github-push** —— 把本地改动统一推送到 GitHub 同名远程仓库的 `temp` 分支，自动处理 commit、remote 创建、冲突检测
+
+注意：`use_skill` 的 `enum` 在 agent 构造时固化，新增 skill 需要重启进程才会被发现。
+
 ## 飞书
 
 飞书配置在：

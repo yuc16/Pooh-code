@@ -82,3 +82,28 @@ class SkillsManager:
                 lines.append(skill.body)
             lines.append("")
         return "\n".join(lines).strip()
+
+    def render_metadata_for_prompt(self) -> str:
+        if not self.skills:
+            self.discover()
+        if not self.skills:
+            return ""
+        lines = [
+            "## Skills",
+            "你可以调用 `use_skill` 工具按名字加载下列任意 skill 的完整指令,拿到后严格按指令执行。",
+            "仅当用户意图匹配某条 description 时才加载,不要无脑全调。",
+            "",
+        ]
+        for skill in self.skills:
+            desc = skill.description or "(无描述)"
+            lines.append(f"- **{skill.name}** — {desc}")
+        return "\n".join(lines).strip()
+
+    def get_body(self, name: str) -> str:
+        if not self.skills:
+            self.discover()
+        for skill in self.skills:
+            if skill.name == name:
+                return skill.body or f"(skill {name} 没有正文内容)"
+        available = ", ".join(s.name for s in self.skills) or "(none)"
+        return f"未找到名为 {name!r} 的 skill。当前可用 skill: {available}"
