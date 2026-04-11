@@ -1,3 +1,3 @@
-Persistent operator memory starts here.
+持久化操作记忆从此处开始。
 
-Add durable preferences, repository facts, and workflow instructions that should survive across sessions.
+在此添加跨会话保留的持久偏好、仓库事实和工作流指令。

@@ -1,8 +1,9 @@
-pooh-code is a Python reimplementation of the core Claude Code workflow.
+pooh-code 是核心 Claude Code 工作流的 Python 重新实现。
 
-Primary interfaces:
-- local CLI REPL
-- Feishu websocket worker
+主要接口：
+- 本地 CLI 交互终端
+- 飞书 WebSocket 工作器
+- Web 前端页面
 
-Primary model transport:
-- ChatGPT Plus/Pro OAuth through the Codex responses endpoint
+主要模型通道：
+- 通过 Codex responses 端点使用 ChatGPT Plus/Pro OAuth

@@ -20,11 +20,22 @@ const els = {
   statusText: $("#status-text"),
 };
 
+const scrollBtn = document.getElementById("scroll-btn");
+
 let state = {
   busy: false,
   sessionId: null,
   sessionKey: null,
 };
+
+// Show/hide scroll-to-bottom button based on scroll position.
+els.messages.addEventListener("scroll", () => {
+  const gap = els.messages.scrollHeight - els.messages.scrollTop - els.messages.clientHeight;
+  scrollBtn.classList.toggle("hidden", gap < 200);
+});
+scrollBtn.addEventListener("click", () => {
+  els.messages.scrollTo({ top: els.messages.scrollHeight, behavior: "smooth" });
+});
 
 function setStatus(kind, text) {
   els.statusDot.className = "dot";
@@ -73,18 +84,36 @@ function renderInline(text) {
   return escapeHtml(text).replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
+function renderMarkdown(text) {
+  if (typeof marked !== "undefined" && marked.parse) {
+    try {
+      return marked.parse(text);
+    } catch (_) {}
+  }
+  return renderInline(text);
+}
+
 function hideEmptyHint() {
   if (els.emptyHint && els.emptyHint.parentNode) {
     els.emptyHint.remove();
   }
 }
 
+let _msgIndex = 0;
+
 function appendMessage(role, text, { scroll = true } = {}) {
   hideEmptyHint();
   const div = document.createElement("div");
   div.className = `msg ${role}`;
   const roleLabel = role === "user" ? "YOU" : role === "assistant" ? "POOH" : "SYS";
-  div.innerHTML = `<span class="role">${roleLabel}</span><div class="body">${renderInline(text)}</div>`;
+  if (role === "assistant") {
+    div.innerHTML = `<span class="role">${roleLabel}</span><div class="body rendered">${renderMarkdown(text)}</div>`;
+  } else {
+    div.innerHTML = `<span class="role">${roleLabel}</span><div class="body">${renderInline(text)}</div>`;
+  }
+  if (role === "user") {
+    div.setAttribute("data-nav-id", `msg-${_msgIndex++}`);
+  }
   els.messages.appendChild(div);
   if (scroll) els.messages.scrollTop = els.messages.scrollHeight;
 }
@@ -106,6 +135,38 @@ async function api(path, opts = {}) {
   return data;
 }
 
+function buildToolGroupHTML(tools) {
+  if (!tools || !tools.length) return "";
+  const items = tools.map((t) => {
+    const inputJson = escapeHtml(JSON.stringify(t.input || {}, null, 2));
+    const resultText = escapeHtml(t.result || "");
+    const errClass = t.is_error ? " error" : "";
+    const statusLabel = t.is_error ? "失败" : "完成";
+    const resultLabel = t.is_error ? "ERROR" : "OUTPUT";
+    return `<div class="tool-block${errClass}">
+      <div class="tool-head">
+        <span class="badge">TOOL</span>
+        <span class="tool-name">${escapeHtml(t.name)}</span>
+        <span class="tool-status">${statusLabel}</span>
+      </div>
+      <div class="tool-body">
+        <div class="tool-label">INPUT</div>
+        <pre class="tool-input">${inputJson}</pre>
+        ${resultText ? `<div class="tool-label">${resultLabel}</div><pre>${resultText}</pre>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+  return `<div class="thinking-group stream-part collapsed">
+    <div class="thinking-head" onclick="this.parentElement.classList.toggle('collapsed')">
+      <span class="thinking-icon">⊙</span>
+      <span class="thinking-label">已思考</span>
+      <span class="thinking-count"> · ${tools.length} 个工具调用</span>
+      <span class="caret">▾</span>
+    </div>
+    <div class="thinking-body">${items}</div>
+  </div>`;
+}
+
 async function refreshMessages() {
   try {
     const data = await api("/api/messages");
@@ -115,12 +176,26 @@ async function refreshMessages() {
       els.messages.appendChild(els.emptyHint || document.createElement("div"));
     } else {
       for (const m of data.messages) {
-        if (m.text && m.text.trim()) {
+        if (m.role === "assistant") {
+          hideEmptyHint();
+          const div = document.createElement("div");
+          div.className = "msg assistant";
+          let bodyHTML = "";
+          if (m.tools && m.tools.length) {
+            bodyHTML += buildToolGroupHTML(m.tools);
+          }
+          if (m.text && m.text.trim()) {
+            bodyHTML += `<div class="stream-part">${renderMarkdown(m.text)}</div>`;
+          }
+          div.innerHTML = `<span class="role">POOH</span><div class="body rendered">${bodyHTML || "(empty response)"}</div>`;
+          els.messages.appendChild(div);
+        } else if (m.text && m.text.trim()) {
           appendMessage(m.role, m.text, { scroll: false });
         }
       }
       els.messages.scrollTop = els.messages.scrollHeight;
     }
+    rebuildChatNav();
   } catch (err) {
     setStatus("err", `加载消息失败: ${err.message}`);
   }
@@ -135,11 +210,13 @@ async function refreshSessions() {
     for (const item of list) {
       const li = document.createElement("li");
       if (item.active) li.classList.add("active");
+      const label = item.label ? escapeHtml(item.label) : "";
       li.innerHTML = `
         <div class="session-row">
           <div class="session-info">
+            ${label ? `<div class="session-label">${label}</div>` : ""}
             <div class="session-id">${escapeHtml(item.session_id)}${item.active ? " ·当前" : ""}</div>
-            <div class="session-meta">msgs=${item.message_count} · ${escapeHtml(item.last_active || "")}</div>
+            <div class="session-meta">msgs=${item.message_count}</div>
           </div>
           <button class="session-del" title="删除会话" aria-label="删除会话">✕</button>
         </div>
@@ -184,6 +261,7 @@ function createAssistantBubble() {
     root: div,
     body: div.querySelector(".body"),
     currentText: null, // active text stream-part being appended to
+    textParts: [],     // [{el, raw}] — accumulate raw text per segment for markdown rendering
     toolBlocks: {},    // call_id -> element
     cursor: null,
   };
@@ -204,14 +282,30 @@ function removeCursor(bubble) {
   bubble.cursor = null;
 }
 
+function finalizeToolGroup(bubble) {
+  const group = bubble._currentToolGroup;
+  if (group && !group._finalized) {
+    group._finalized = true;
+    const n = group._toolCount || 0;
+    group.querySelector(".thinking-icon").textContent = "⊙";
+    group.querySelector(".thinking-label").textContent = `已思考`;
+    group.querySelector(".thinking-count").textContent =
+      n > 1 ? ` · ${n} 个工具调用` : n === 1 ? ` · 1 个工具调用` : "";
+  }
+}
+
 function appendTextDelta(bubble, delta) {
   removeCursor(bubble);
+  // When text arrives after tool calls, finalize the thinking group.
+  finalizeToolGroup(bubble);
   if (!bubble.currentText) {
     const span = document.createElement("div");
     span.className = "stream-part";
     bubble.body.appendChild(span);
     bubble.currentText = span;
+    bubble.textParts.push({ el: span, raw: "" });
   }
+  bubble.textParts[bubble.textParts.length - 1].raw += delta;
   bubble.currentText.appendChild(document.createTextNode(delta));
   ensureCursor(bubble);
   autoScrollIfNear();
@@ -220,14 +314,41 @@ function appendTextDelta(bubble, delta) {
 function addToolBlock(bubble, { call_id, name }) {
   removeCursor(bubble);
   bubble.currentText = null; // next text will start a new segment
+
+  // Merge consecutive tool calls into one collapsible "thinking" group.
+  let group = bubble._currentToolGroup;
+  if (!group || group._finalized) {
+    group = document.createElement("div");
+    group.className = "thinking-group stream-part collapsed";
+    group.innerHTML = `
+      <div class="thinking-head">
+        <span class="thinking-icon">⊘</span>
+        <span class="thinking-label">思考中…</span>
+        <span class="thinking-count"></span>
+        <span class="caret">▾</span>
+      </div>
+      <div class="thinking-body"></div>
+    `;
+    group._toolCount = 0;
+    group._finalized = false;
+    group.querySelector(".thinking-head").addEventListener("click", () => {
+      group.classList.toggle("collapsed");
+    });
+    bubble.body.appendChild(group);
+    bubble._currentToolGroup = group;
+  }
+
+  group._toolCount++;
+  group.querySelector(".thinking-count").textContent =
+    group._toolCount > 1 ? ` (${group._toolCount} 个工具调用)` : "";
+
   const wrap = document.createElement("div");
-  wrap.className = "tool-block stream-part";
+  wrap.className = "tool-block";
   wrap.innerHTML = `
     <div class="tool-head">
       <span class="badge">TOOL</span>
       <span class="tool-name"></span>
       <span class="tool-status">调用中…</span>
-      <span class="caret">▾</span>
     </div>
     <div class="tool-body">
       <div class="tool-label">INPUT</div>
@@ -235,10 +356,7 @@ function addToolBlock(bubble, { call_id, name }) {
     </div>
   `;
   wrap.querySelector(".tool-name").textContent = name || "tool";
-  wrap.querySelector(".tool-head").addEventListener("click", () => {
-    wrap.classList.toggle("collapsed");
-  });
-  bubble.body.appendChild(wrap);
+  group.querySelector(".thinking-body").appendChild(wrap);
   bubble.toolBlocks[call_id] = wrap;
   autoScrollIfNear();
   return wrap;
@@ -335,8 +453,17 @@ async function streamChat(text) {
         break;
       case "done":
         removeCursor(bubble);
+        finalizeToolGroup(bubble);
+        // 把每段原始文本用 markdown 渲染替换
+        for (const part of bubble.textParts) {
+          const trimmed = part.raw.trim();
+          if (trimmed) {
+            part.el.innerHTML = renderMarkdown(trimmed);
+          }
+        }
+        bubble.body.classList.add("rendered");
         if (!bubble.body.textContent.trim()) {
-          bubble.body.textContent = evt.text || "(empty response)";
+          bubble.body.innerHTML = renderMarkdown(evt.text || "(empty response)");
         }
         if (evt.session_id) {
           state.sessionId = evt.session_id;
@@ -419,6 +546,7 @@ async function sendMessage(text) {
   }
 
   appendMessage("user", text);
+  rebuildChatNav();
   setBusy(true);
   try {
     await streamChat(text);
@@ -455,6 +583,51 @@ async function switchSession(prefix) {
   }
 }
 
+// ---------- chat nav ----------
+const chatNavList = document.getElementById("chat-nav-list");
+
+function rebuildChatNav() {
+  chatNavList.innerHTML = "";
+  const userMsgs = els.messages.querySelectorAll('.msg.user[data-nav-id]');
+  userMsgs.forEach((el, i) => {
+    const rawText = el.querySelector(".body")?.textContent?.trim() || `消息 ${i + 1}`;
+    const truncated = rawText.length > 24 ? rawText.slice(0, 24) + "…" : rawText;
+    const btn = document.createElement("button");
+    btn.className = "chat-nav-item";
+    btn.innerHTML = `<span class="nav-text">${escapeHtml(truncated)}</span><span class="nav-indicator"></span>`;
+    btn.addEventListener("click", () => {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      // Highlight briefly.
+      el.style.outline = "2px solid var(--accent)";
+      setTimeout(() => { el.style.outline = ""; }, 1200);
+    });
+    chatNavList.appendChild(btn);
+  });
+  updateChatNavActive();
+}
+
+function updateChatNavActive() {
+  const userMsgs = els.messages.querySelectorAll('.msg.user[data-nav-id]');
+  const navItems = chatNavList.querySelectorAll('.chat-nav-item');
+  if (!userMsgs.length || !navItems.length) return;
+
+  const containerRect = els.messages.getBoundingClientRect();
+  const containerMid = containerRect.top + containerRect.height / 2;
+  let closestIdx = 0;
+  let closestDist = Infinity;
+  userMsgs.forEach((el, i) => {
+    const rect = el.getBoundingClientRect();
+    const dist = Math.abs(rect.top + rect.height / 2 - containerMid);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closestIdx = i;
+    }
+  });
+  navItems.forEach((n, i) => n.classList.toggle("active", i === closestIdx));
+}
+
+els.messages.addEventListener("scroll", updateChatNavActive);
+
 // ---------- events ----------
 els.composer.addEventListener("submit", (e) => {
   e.preventDefault();
@@ -481,6 +654,17 @@ els.btnNew.addEventListener("click", newSession);
 els.btnRefresh.addEventListener("click", () => {
   refreshMessages();
   refreshSessions();
+});
+
+document.getElementById("sidebar-toggle").addEventListener("click", () => {
+  document.body.classList.toggle("sidebar-collapsed");
+});
+
+document.getElementById("nav-toggle").addEventListener("click", () => {
+  const nav = document.getElementById("chat-nav");
+  nav.classList.toggle("collapsed");
+  const btn = document.getElementById("nav-toggle");
+  btn.textContent = nav.classList.contains("collapsed") ? "‹" : "›";
 });
 
 document.querySelectorAll(".chip[data-cmd]").forEach((chip) => {

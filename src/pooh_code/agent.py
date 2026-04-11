@@ -188,6 +188,33 @@ class PoohAgent:
         finally:
             self._session_local.session_key = previous
 
+    def _maybe_generate_title(self, session_key: str, user_text: str, reply_text: str) -> None:
+        """If this is the first Q&A in the session (no label yet), generate a short title."""
+        existing = self.sessions.get_label(session_key)
+        if existing:
+            return
+        try:
+            prompt = (
+                "请用中文为以下对话起一个简短标题（10字以内），只输出标题文本，不要加引号和标点：\n"
+                f"用户：{user_text[:200]}\n"
+                f"助手：{reply_text[:300]}"
+            )
+            resp = self.client.messages.create(
+                model=self.config.model,
+                system="你是一个标题生成器，只输出标题文本。",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=30,
+            )
+            title = ""
+            for block in resp.content:
+                if getattr(block, "type", None) == "text":
+                    title += getattr(block, "text", "")
+            title = title.strip().strip('"').strip("'").strip("《").strip("》")
+            if title:
+                self.sessions.set_label(session_key, title)
+        except Exception:
+            pass
+
     def ask_stream(
         self,
         session_key: str,
@@ -307,14 +334,20 @@ class PoohAgent:
         if not final_text.strip():
             final_text = "(empty response)"
         session_id = self.sessions.get_session_id(session_key)
-        _emit(
-            "done",
-            {
-                "text": final_text.strip(),
-                "session_id": session_id,
-                "compacted": compacted,
-            },
-        )
+
+        # Generate title before emitting done, so client receives it in the stream.
+        self._maybe_generate_title(session_key, user_text, final_text)
+        label = self.sessions.get_label(session_key)
+
+        done_payload: dict[str, Any] = {
+            "text": final_text.strip(),
+            "session_id": session_id,
+            "compacted": compacted,
+        }
+        if label:
+            done_payload["title"] = label
+        _emit("done", done_payload)
+
         return AgentReply(
             text=final_text.strip(),
             session_key=session_key,
@@ -398,6 +431,7 @@ class PoohAgent:
 
         if not final_text.strip():
             final_text = "(empty response)"
+        self._maybe_generate_title(session_key, user_text, final_text)
         return AgentReply(
             text=final_text.strip(),
             session_key=session_key,

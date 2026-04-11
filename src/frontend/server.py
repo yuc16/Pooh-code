@@ -46,43 +46,96 @@ MIME_TYPES = {
 }
 
 
-def _content_to_display_text(content: Any) -> str:
-    """Flatten a transcript entry's content into a plain display string."""
+def _extract_text_only(content: Any) -> str:
+    """Extract only the text parts from content, ignoring tool blocks."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
         chunks: list[str] = []
         for block in content:
-            if not isinstance(block, dict):
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = str(block.get("text", ""))
+                if text:
+                    chunks.append(text)
+            elif not isinstance(block, dict):
                 chunks.append(str(block))
-                continue
-            btype = block.get("type")
-            if btype == "text":
-                chunks.append(str(block.get("text", "")))
-            elif btype == "tool_use":
-                name = block.get("name", "tool")
-                payload = json.dumps(block.get("input", {}), ensure_ascii=False)
-                chunks.append(f"[tool_use:{name}] {payload}")
-            elif btype == "tool_result":
-                raw = block.get("content", "")
-                if not isinstance(raw, str):
-                    raw = json.dumps(raw, ensure_ascii=False, default=str)
-                chunks.append(f"[tool_result] {raw}")
-            else:
-                chunks.append(json.dumps(block, ensure_ascii=False, default=str))
-        return "\n".join(chunk for chunk in chunks if chunk)
+        return "\n".join(chunks)
     return json.dumps(content, ensure_ascii=False, default=str)
+
+
+def _extract_tool_blocks(content: Any) -> list[dict[str, Any]]:
+    """Extract tool_use / tool_result blocks for structured rendering."""
+    if not isinstance(content, list):
+        return []
+    blocks: list[dict[str, Any]] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "tool_use":
+            blocks.append({
+                "type": "tool_use",
+                "id": block.get("id", ""),
+                "name": block.get("name", "tool"),
+                "input": block.get("input", {}),
+            })
+        elif btype == "tool_result":
+            raw = block.get("content", "")
+            if not isinstance(raw, str):
+                raw = json.dumps(raw, ensure_ascii=False, default=str)
+            blocks.append({
+                "type": "tool_result",
+                "tool_use_id": block.get("tool_use_id", ""),
+                "content": raw,
+                "is_error": bool(block.get("is_error")),
+            })
+    return blocks
 
 
 def _serialize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
+    # Build a lookup of tool_result by tool_use_id for pairing.
+    tool_results: dict[str, dict[str, Any]] = {}
+    for msg in messages:
+        if msg.get("role") == "user":
+            for tb in _extract_tool_blocks(msg.get("content", "")):
+                if tb["type"] == "tool_result" and tb.get("tool_use_id"):
+                    tool_results[tb["tool_use_id"]] = tb
+
     for msg in messages:
         role = msg.get("role", "user")
-        text = _content_to_display_text(msg.get("content", ""))
-        # Skip pure tool_result-only turns to keep the chat readable.
-        if role == "user" and text.startswith("[tool_result]"):
+        content = msg.get("content", "")
+
+        # Skip pure tool-result user turns.
+        if role == "user":
+            tool_blocks = _extract_tool_blocks(content)
+            text = _extract_text_only(content)
+            if not text.strip() and tool_blocks:
+                continue
+            out.append({"role": role, "text": text})
             continue
-        out.append({"role": role, "text": text})
+
+        if role == "assistant":
+            text = _extract_text_only(content)
+            tools = _extract_tool_blocks(content)
+            # Pair each tool_use with its result.
+            paired: list[dict[str, Any]] = []
+            for t in tools:
+                if t["type"] == "tool_use":
+                    result = tool_results.get(t.get("id", ""))
+                    paired.append({
+                        "name": t["name"],
+                        "input": t["input"],
+                        "result": result.get("content", "") if result else "",
+                        "is_error": result.get("is_error", False) if result else False,
+                    })
+            entry: dict[str, Any] = {"role": role, "text": text}
+            if paired:
+                entry["tools"] = paired
+            out.append(entry)
+            continue
+
+        out.append({"role": role, "text": _extract_text_only(content)})
     return out
 
 

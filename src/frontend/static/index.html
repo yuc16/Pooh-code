@@ -44,6 +44,7 @@
     <main class="main">
       <header class="topbar">
         <div class="topbar-left">
+          <button class="sidebar-toggle" id="sidebar-toggle" title="切换侧栏" aria-label="切换侧栏">☰</button>
           <span class="dot" id="status-dot"></span>
           <span id="status-text">就绪</span>
         </div>
@@ -53,12 +54,21 @@
         </div>
       </header>
 
-      <section class="messages" id="messages">
-        <div class="empty" id="empty-hint">
-          <div class="empty-title">开始和 Pooh Code 对话</div>
-          <div class="empty-sub">支持 <code>/help</code>、<code>/new</code>、<code>/compact</code> 等命令</div>
+      <div class="content-row">
+        <div class="messages-wrapper">
+          <section class="messages" id="messages">
+            <div class="empty" id="empty-hint">
+              <div class="empty-title">开始和 Pooh Code 对话</div>
+              <div class="empty-sub">支持 <code>/help</code>、<code>/new</code>、<code>/compact</code> 等命令</div>
+            </div>
+          </section>
+          <button class="scroll-btn hidden" id="scroll-btn" title="回到底部" aria-label="回到底部">↓</button>
         </div>
-      </section>
+        <aside class="chat-nav" id="chat-nav">
+          <button class="nav-toggle" id="nav-toggle" title="切换导航" aria-label="切换导航">›</button>
+          <div class="chat-nav-list" id="chat-nav-list"></div>
+        </aside>
+      </div>
 
       <form class="composer" id="composer">
         <textarea
@@ -71,6 +81,7 @@
       </form>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

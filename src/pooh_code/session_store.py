@@ -372,6 +372,21 @@ class SessionStore:
         self._save_index()
         return slot["active_session_id"]
 
+    def set_label(self, session_key: str, label: str, session_id: str | None = None) -> None:
+        slot = self._get_slot(session_key)
+        target_id = session_id or slot["active_session_id"]
+        sessions = slot.get("sessions") or {}
+        if target_id in sessions:
+            sessions[target_id]["label"] = label
+        self._save_index()
+
+    def get_label(self, session_key: str, session_id: str | None = None) -> str:
+        slot = self._get_slot(session_key)
+        target_id = session_id or slot["active_session_id"]
+        sessions = slot.get("sessions") or {}
+        meta = sessions.get(target_id, {})
+        return meta.get("label", "")
+
     def clear_session(self, session_key: str) -> str:
         session_id = self.ensure_session(session_key)
         self._transcript_path(session_key, session_id).write_text("", encoding="utf-8")
