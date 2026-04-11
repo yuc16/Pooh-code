@@ -373,6 +373,14 @@ class PoohAgent:
 
             if tool_result_blocks:
                 self.sessions.append_message(session_key, "user", tool_result_blocks)
+        else:
+            # for 循环正常跑完意味着跑满 max_turns 还在 tool_use,被强制截断
+            note = (
+                f"\n\n[已达到 max_turns={self.config.max_turns} 上限,任务被截断。"
+                f"再发一条消息可让我继续。]"
+            )
+            final_text += note
+            _emit("truncated", {"max_turns": self.config.max_turns})
 
         if not final_text.strip():
             final_text = "(empty response)"
@@ -473,6 +481,11 @@ class PoohAgent:
             if tool_result_blocks:
                 self.sessions.append_message(session_key, "user", tool_result_blocks)
                 messages.append({"role": "user", "content": tool_result_blocks})
+        else:
+            final_text += (
+                f"\n\n[已达到 max_turns={self.config.max_turns} 上限,任务被截断。"
+                f"再发一条消息可让我继续。]"
+            )
 
         if not final_text.strip():
             final_text = "(empty response)"

@@ -484,6 +484,12 @@ async function streamChat(text) {
       case "compacted":
         appendMessage("system", `[autocompact -> ${evt.display || ""}]`);
         break;
+      case "truncated":
+        appendMessage(
+          "system",
+          `⚠️ 已达到 max_turns=${evt.max_turns} 上限,任务被截断。再发一条消息可让我继续。`,
+        );
+        break;
       case "done":
         removeCursor(bubble);
         finalizeToolGroup(bubble);
