@@ -294,10 +294,16 @@ function finalizeToolGroup(bubble) {
   }
 }
 
+// ── 线性时间线：每次切换事件类型都会结束前一个"当前块" ──
+function _endOtherBlocks(bubble, keep) {
+  if (keep !== "text") bubble.currentText = null;
+  if (keep !== "reasoning") bubble._currentReasoning = null;
+  if (keep !== "tool") finalizeToolGroup(bubble);
+}
+
 function appendTextDelta(bubble, delta) {
   removeCursor(bubble);
-  // When text arrives after tool calls, finalize the thinking group.
-  finalizeToolGroup(bubble);
+  _endOtherBlocks(bubble, "text");
   if (!bubble.currentText) {
     const span = document.createElement("div");
     span.className = "stream-part";
@@ -311,9 +317,28 @@ function appendTextDelta(bubble, delta) {
   autoScrollIfNear();
 }
 
+function appendReasoningDelta(bubble, delta) {
+  removeCursor(bubble);
+  _endOtherBlocks(bubble, "reasoning");
+  if (!bubble._currentReasoning) {
+    const block = document.createElement("div");
+    block.className = "reasoning-block stream-part";
+    block.innerHTML = `<div class="reasoning-label">REASONING</div><div class="reasoning-text"></div>`;
+    bubble.body.appendChild(block);
+    bubble._currentReasoning = block.querySelector(".reasoning-text");
+  }
+  bubble._currentReasoning.appendChild(document.createTextNode(delta));
+  autoScrollIfNear();
+}
+
+function startReasoningPart(bubble) {
+  // 一个 reasoning part 结束 → 关闭当前块，下一次 delta 会新开一块
+  bubble._currentReasoning = null;
+}
+
 function addToolBlock(bubble, { call_id, name }) {
   removeCursor(bubble);
-  bubble.currentText = null; // next text will start a new segment
+  _endOtherBlocks(bubble, "tool");
 
   // Merge consecutive tool calls into one collapsible "thinking" group.
   let group = bubble._currentToolGroup;
@@ -426,6 +451,14 @@ async function streamChat(text) {
     switch (evt.type) {
       case "text_delta":
         appendTextDelta(bubble, evt.text || "");
+        break;
+      case "reasoning_delta":
+        appendReasoningDelta(bubble, evt.text || "");
+        break;
+      case "reasoning_part_added":
+        startReasoningPart(bubble);
+        break;
+      case "reasoning_part_done":
         break;
       case "tool_use_started":
         addToolBlock(bubble, { call_id: evt.call_id, name: evt.name });

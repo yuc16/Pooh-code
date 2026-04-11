@@ -13,3 +13,4 @@ workplace/runtime/logs/
 workplace/runtime/sessions/
 workplace/runtime/config/settings.json
 .DS_Store
+.env

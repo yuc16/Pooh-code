@@ -116,6 +116,14 @@ class PoohAgent:
             messages = [*messages, {"role": "user", "content": pending_user_text}]
         return self.context.usage(messages, self.build_system_prompt(user_text_for_prompt))
 
+    def _get_real_total_tokens(self, session_key: str) -> int | None:
+        usage = self.sessions.get_last_usage(session_key)
+        if isinstance(usage, dict):
+            raw = usage.get("total_tokens")
+            if isinstance(raw, int) and raw > 0:
+                return raw
+        return None
+
     def compact_session(
         self,
         session_key: str,
@@ -129,7 +137,10 @@ class PoohAgent:
         if not messages:
             return False
         system_prompt = self.build_system_prompt(user_text_for_prompt)
-        if not force and not self.context.should_compact(messages, system_prompt):
+        real_tokens = self._get_real_total_tokens(session_key)
+        if not force and not self.context.should_compact(
+            messages, system_prompt, real_total_tokens=real_tokens
+        ):
             return False
         compacted = self.context.compact_messages(messages, system_prompt)
         if compacted == messages:
@@ -260,7 +271,9 @@ class PoohAgent:
         for turn_idx in range(self.config.max_turns):
             messages = self.sessions.load_messages(session_key)
             system_prompt = self.build_system_prompt(user_text)
-            if self.context.should_compact(messages, system_prompt):
+            if self.context.should_compact(
+                messages, system_prompt, real_total_tokens=self._get_real_total_tokens(session_key)
+            ):
                 self.compact_session(
                     session_key, user_text_for_prompt=user_text, force=True
                 )
@@ -377,7 +390,9 @@ class PoohAgent:
         for _ in range(self.config.max_turns):
             messages = self.sessions.load_messages(session_key)
             system_prompt = self.build_system_prompt(user_text)
-            if self.context.should_compact(messages, system_prompt):
+            if self.context.should_compact(
+                messages, system_prompt, real_total_tokens=self._get_real_total_tokens(session_key)
+            ):
                 self.compact_session(session_key, user_text_for_prompt=user_text, force=True)
                 messages = self.sessions.load_messages(session_key)
 

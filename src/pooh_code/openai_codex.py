@@ -75,6 +75,10 @@ class _MessagesAPI:
             "instructions": instructions,
             "input": input_items,
             "text": {"verbosity": os.getenv("OPENAI_CODEX_VERBOSITY", "medium")},
+            "reasoning": {
+                "effort": os.getenv("OPENAI_CODEX_REASONING_EFFORT", "medium"),
+                "summary": os.getenv("OPENAI_CODEX_REASONING_SUMMARY", "auto"),
+            },
             "include": ["reasoning.encrypted_content"],
             "prompt_cache_key": _prompt_cache_key(system, messages),
             "tool_choice": "auto",
@@ -321,6 +325,23 @@ def _consume_sse(
             content += delta
             if delta:
                 _emit("text_delta", {"text": delta})
+        elif event_type in (
+            "response.reasoning_summary_text.delta",
+            "response.reasoning_text.delta",
+        ):
+            delta = event.get("delta") or ""
+            if delta:
+                _emit("reasoning_delta", {"text": delta})
+        elif event_type in (
+            "response.reasoning_summary_part.added",
+            "response.reasoning_summary_text.added",
+        ):
+            _emit("reasoning_part_added", {})
+        elif event_type in (
+            "response.reasoning_summary_text.done",
+            "response.reasoning_summary_part.done",
+        ):
+            _emit("reasoning_part_done", {})
         elif event_type == "response.function_call_arguments.delta":
             call_id = event.get("call_id")
             if call_id and call_id in tool_call_buffers:
