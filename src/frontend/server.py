@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import mimetypes
 import sys
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 # Ensure the sibling package `pooh_code` is importable when this file is run
 # directly (e.g. `python src/frontend/server.py`).
@@ -30,9 +31,10 @@ from pooh_code.agent import PoohAgent  # noqa: E402
 from pooh_code.commands import CommandProcessor  # noqa: E402
 from pooh_code.config import load_settings  # noqa: E402
 from pooh_code.output_files import (  # noqa: E402
-    DELIVERABLE_SUFFIXES,
+    delete_session_output_dir,
     OUTPUT_DIR,
-    is_deliverable_output_path,
+    group_output_files_by_session,
+    is_visible_output_path,
     iter_deliverable_files,
 )
 
@@ -56,6 +58,7 @@ DOWNLOAD_MIME_TYPES = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".py": "text/x-python; charset=utf-8",
     ".pdf": "application/pdf",
     ".csv": "text/csv; charset=utf-8",
     ".tsv": "text/tab-separated-values; charset=utf-8",
@@ -70,6 +73,17 @@ DOWNLOAD_MIME_TYPES = {
     ".svg": "image/svg+xml",
     ".zip": "application/zip",
 }
+
+
+def _content_disposition_attachment(filename: str) -> str:
+    try:
+        ascii_name = filename.encode("ascii").decode("ascii")
+    except UnicodeEncodeError:
+        suffix = Path(filename).suffix
+        ascii_name = f"download{suffix}" if suffix else "download"
+    escaped_ascii_name = ascii_name.replace("\\", "\\\\").replace('"', '\\"')
+    encoded_name = quote(filename, safe="")
+    return f"attachment; filename=\"{escaped_ascii_name}\"; filename*=UTF-8''{encoded_name}"
 
 
 def _extract_text_only(content: Any) -> str:
@@ -441,6 +455,7 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         agent = self.server.agent
         session_key = self._session_key()
         active_id = agent.sessions.delete_session(session_key, session_id)
+        delete_session_output_dir(session_id)
         self._send_json(
             {
                 "ok": True,
@@ -452,18 +467,22 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
 
     def _handle_files(self) -> None:
         """列出 workplace/output/ 中的文件，支持浏览和下载。"""
-        files: list[dict[str, Any]] = []
-        for f in iter_deliverable_files():
-            rel = f.relative_to(OUTPUT_DIR)
-            stat = f.stat()
-            files.append({
-                "path": str(rel),
-                "name": f.name,
-                "size": stat.st_size,
-                "modified": stat.st_mtime,
-                "suffix": f.suffix.lower(),
-            })
-        self._send_json({"ok": True, "files": files})
+        groups = group_output_files_by_session()
+        self._send_json(
+            {
+                "ok": True,
+                "groups": groups,
+                "deliverable_files": [
+                    {
+                        "path": str(f.relative_to(OUTPUT_DIR)),
+                        "name": f.name,
+                        "suffix": f.suffix.lower(),
+                    }
+                    for f in iter_deliverable_files()
+                ],
+                **self._state_payload(),
+            }
+        )
 
     def _handle_download(self, parsed: Any) -> None:
         """下载 workplace/output/ 中的文件。"""
@@ -480,19 +499,20 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         if not target.exists() or not target.is_file():
             self._send_error_json(404, f"not found: {rel_path}")
             return
-        if target.suffix.lower() not in DELIVERABLE_SUFFIXES or not is_deliverable_output_path(target):
+        if not is_visible_output_path(target):
             self._send_error_json(403, f"unsupported download type: {target.suffix.lower()}")
             return
-        mime = DOWNLOAD_MIME_TYPES.get(target.suffix.lower(), "application/octet-stream")
+        mime = DOWNLOAD_MIME_TYPES.get(target.suffix.lower())
+        if not mime:
+            guessed, _ = mimetypes.guess_type(target.name)
+            mime = guessed or "application/octet-stream"
         data = target.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(data)))
-        # 对 Office 文件和二进制文件使用 attachment 触发下载
-        disposition = "attachment"
         self.send_header(
             "Content-Disposition",
-            f'{disposition}; filename="{target.name}"',
+            _content_disposition_attachment(target.name),
         )
         self.send_header("Cache-Control", "no-store")
         self.end_headers()

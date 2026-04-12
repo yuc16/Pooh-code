@@ -10,7 +10,10 @@ const els = {
   btnSend: $("#btn-send"),
   btnNew: $("#btn-new"),
   btnRefresh: $("#btn-refresh"),
+  sidebarResizer: $("#sidebar-resizer"),
   sessionList: $("#session-list"),
+  fileGroups: $("#file-groups"),
+  filesSummary: $("#files-summary"),
   sessionId: $("#session-id"),
   usageLabel: $("#usage-label"),
   contextPill: $("#context-pill"),
@@ -27,6 +30,23 @@ let state = {
   sessionId: null,
   sessionKey: null,
 };
+
+const SIDEBAR_WIDTH_KEY = "pooh.sidebar.width";
+const SIDEBAR_MIN = 220;
+const SIDEBAR_MAX = 520;
+
+function applySidebarWidth(width) {
+  const clamped = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Math.round(width)));
+  document.documentElement.style.setProperty("--sidebar-width", `${clamped}px`);
+  try {
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(clamped));
+  } catch (_) {}
+}
+
+try {
+  const savedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY) || 0);
+  if (savedWidth) applySidebarWidth(savedWidth);
+} catch (_) {}
 
 // Show/hide scroll-to-bottom button based on scroll position.
 els.messages.addEventListener("scroll", () => {
@@ -257,9 +277,12 @@ async function refreshSessions() {
       const row = document.createElement("div");
       row.className = "session-item" + (item.active ? " active" : "");
       row.innerHTML =
+        `<div class="session-item-main">` +
         `<span class="session-item-label">${escapeHtml(label)}</span>` +
+        `<span class="session-item-id">${escapeHtml(item.session_id)}</span>` +
+        `</div>` +
         `<button class="session-item-del" title="删除会话">✕</button>`;
-      row.querySelector(".session-item-label").addEventListener("click", () => switchSession(item.session_id));
+      row.querySelector(".session-item-main").addEventListener("click", () => switchSession(item.session_id));
       row.querySelector(".session-item-del").addEventListener("click", (e) => {
         e.stopPropagation();
         deleteSession(item.session_id);
@@ -278,7 +301,7 @@ async function deleteSession(sessionId) {
       body: { session_id: sessionId },
     });
     applyState(data);
-    await Promise.all([refreshMessages(), refreshSessions()]);
+    await Promise.all([refreshMessages(), refreshSessions(), refreshFiles()]);
     setStatus("ok", `已删除 ${sessionId}`);
   } catch (err) {
     setStatus("err", `删除失败: ${err.message}`);
@@ -495,15 +518,22 @@ function _humanSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function _formatTime(ts) {
+  if (!ts) return "未知时间";
+  const d = new Date(ts * 1000);
+  if (isNaN(d)) return "未知时间";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 /**
- * 从工具结果中提取 output/ 下的 Office 交付文件路径。
+ * 从工具结果中提取 output/ 下的文件路径。
  */
 function _extractOutputPaths(toolName, resultText) {
   if (toolName !== "write_file" && toolName !== "bash") return [];
-  const matches = resultText.match(/workplace\/output\/([^\s"'`]+\.(?:docx|xlsx|pptx))/gi) || [];
+  const matches = resultText.match(/workplace\/output\/([^\s"'`)\]}]+)/gi) || [];
   const outputPaths = [];
   for (const match of matches) {
-    const relPath = match.replace(/^.*?workplace\/output\//i, "");
+    const relPath = match.replace(/^.*?workplace\/output\//i, "").replace(/[),;:\]}]+$/, "");
     if (!outputPaths.includes(relPath)) outputPaths.push(relPath);
   }
   return outputPaths;
@@ -521,6 +551,79 @@ function createDownloadButton(relPath) {
     `<span class="file-meta">点击下载</span>` +
     `</span>`;
   return a;
+}
+
+function renderFileGroups(groups) {
+  els.fileGroups.innerHTML = "";
+  const items = groups || [];
+  const totalFiles = items.reduce((sum, group) => sum + (group.file_count || 0), 0);
+  els.filesSummary.textContent = `${items.length} 组 / ${totalFiles} 文件`;
+
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "file-empty";
+    empty.textContent = "还没有产物";
+    els.fileGroups.appendChild(empty);
+    return;
+  }
+
+  for (const group of items) {
+    const wrap = document.createElement("div");
+    const isCurrent = group.session_id === state.sessionId;
+    wrap.className = "file-group" + (isCurrent ? " current" : "");
+
+    const header = document.createElement("button");
+    header.className = "file-group-head";
+    header.type = "button";
+    header.innerHTML =
+      `<span class="file-group-session">${escapeHtml(group.session_id)}</span>` +
+      `<span class="file-group-count">${group.file_count || 0} 文件</span>`;
+    wrap.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "file-group-body";
+
+    const meta = document.createElement("div");
+    meta.className = "file-group-meta";
+    meta.textContent = `最近更新 ${_formatTime(group.latest_modified)}`;
+    body.appendChild(meta);
+
+    for (const file of group.files || []) {
+      const row = document.createElement("a");
+      row.className = "file-row downloadable";
+      row.href = `/api/download?path=${encodeURIComponent(file.path)}`;
+      row.target = "_blank";
+      row.innerHTML =
+        `<span class="file-row-icon">${_fileIcon(file.name)}</span>` +
+        `<span class="file-row-main">` +
+        `<span class="file-row-name">${escapeHtml(file.name)}</span>` +
+        `<span class="file-row-path">${escapeHtml(file.relative_path || file.path)}</span>` +
+        `</span>` +
+        `<span class="file-row-side">` +
+        `<span class="file-row-size">${_humanSize(file.size || 0)}</span>` +
+        `<span class="file-row-tag">下载</span>` +
+        `</span>`;
+      body.appendChild(row);
+    }
+
+    wrap.appendChild(body);
+    header.addEventListener("click", () => {
+      wrap.classList.toggle("collapsed");
+    });
+    if (!isCurrent) wrap.classList.add("collapsed");
+    els.fileGroups.appendChild(wrap);
+  }
+}
+
+async function refreshFiles() {
+  try {
+    const data = await api("/api/files");
+    applyState(data);
+    renderFileGroups(data.groups || []);
+  } catch (err) {
+    els.filesSummary.textContent = "加载失败";
+    els.fileGroups.innerHTML = `<div class="file-empty">产物列表加载失败: ${escapeHtml(err.message)}</div>`;
+  }
 }
 
 async function streamChat(text) {
@@ -681,7 +784,7 @@ async function sendMessage(text) {
       if (data.text && data.text !== "__EXIT__") {
         appendMessage("system", data.text);
       }
-      await refreshSessions();
+      await Promise.all([refreshSessions(), refreshFiles()]);
     } catch (err) {
       appendMessage("system", `命令错误: ${err.message}`);
       setStatus("err", err.message);
@@ -696,7 +799,7 @@ async function sendMessage(text) {
   setBusy(true);
   try {
     await streamChat(text);
-    refreshSessions();
+    await Promise.all([refreshSessions(), refreshFiles()]);
   } catch (err) {
     appendMessage("system", `请求失败: ${err.message}`);
     setStatus("err", err.message);
@@ -709,7 +812,7 @@ async function newSession() {
   try {
     const data = await api("/api/session/new", { method: "POST" });
     applyState(data);
-    await Promise.all([refreshMessages(), refreshSessions()]);
+    await Promise.all([refreshMessages(), refreshSessions(), refreshFiles()]);
     setStatus("ok", `新会话 ${data.session_id}`);
   } catch (err) {
     setStatus("err", err.message);
@@ -723,7 +826,7 @@ async function switchSession(prefix) {
       body: { session_id_prefix: prefix },
     });
     applyState(data);
-    await Promise.all([refreshMessages(), refreshSessions()]);
+    await Promise.all([refreshMessages(), refreshSessions(), refreshFiles()]);
   } catch (err) {
     setStatus("err", err.message);
   }
@@ -800,6 +903,23 @@ els.btnNew.addEventListener("click", newSession);
 els.btnRefresh.addEventListener("click", () => {
   refreshMessages();
   refreshSessions();
+  refreshFiles();
+});
+
+els.sidebarResizer.addEventListener("pointerdown", (e) => {
+  if (document.body.classList.contains("sidebar-collapsed")) return;
+  e.preventDefault();
+  const startX = e.clientX;
+  const startWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--sidebar-width"), 10) || SIDEBAR_MIN;
+  const onMove = (evt) => {
+    applySidebarWidth(startWidth + (evt.clientX - startX));
+  };
+  const onUp = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
 });
 
 document.getElementById("sidebar-toggle").addEventListener("click", () => {
@@ -829,7 +949,7 @@ document.querySelectorAll(".chip[data-cmd]").forEach((chip) => {
     setStatus("err", err.message);
     return;
   }
-  await Promise.all([refreshMessages(), refreshSessions()]);
+  await Promise.all([refreshMessages(), refreshSessions(), refreshFiles()]);
   setStatus("ok", "就绪");
   els.input.focus();
 })();
