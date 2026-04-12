@@ -201,32 +201,50 @@ async function refreshMessages() {
   }
 }
 
+function _sessionDateLabel(isoStr) {
+  if (!isoStr) return "未知";
+  const d = new Date(isoStr);
+  if (isNaN(d)) return "未知";
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diff = Math.round((today - target) / 86400000);
+  if (diff === 0) return "今天";
+  if (diff === 1) return "昨天";
+  if (diff <= 6) return `${diff} 天前`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 async function refreshSessions() {
   try {
     const data = await api("/api/sessions");
     applyState(data);
     const list = data.sessions || [];
     els.sessionList.innerHTML = "";
+
+    let lastGroup = null;
     for (const item of list) {
-      const li = document.createElement("li");
-      if (item.active) li.classList.add("active");
-      const label = item.label ? escapeHtml(item.label) : "";
-      li.innerHTML = `
-        <div class="session-row">
-          <div class="session-info">
-            ${label ? `<div class="session-label">${label}</div>` : ""}
-            <div class="session-id">${escapeHtml(item.session_id)}${item.active ? " ·当前" : ""}</div>
-            <div class="session-meta">msgs=${item.message_count}</div>
-          </div>
-          <button class="session-del" title="删除会话" aria-label="删除会话">✕</button>
-        </div>
-      `;
-      li.querySelector(".session-info").addEventListener("click", () => switchSession(item.session_id));
-      li.querySelector(".session-del").addEventListener("click", (e) => {
+      const group = _sessionDateLabel(item.last_active);
+      if (group !== lastGroup) {
+        lastGroup = group;
+        const hdr = document.createElement("div");
+        hdr.className = "session-date-group";
+        hdr.textContent = group;
+        els.sessionList.appendChild(hdr);
+      }
+
+      const label = item.label || item.session_id;
+      const row = document.createElement("div");
+      row.className = "session-item" + (item.active ? " active" : "");
+      row.innerHTML =
+        `<span class="session-item-label">${escapeHtml(label)}</span>` +
+        `<button class="session-item-del" title="删除会话">✕</button>`;
+      row.querySelector(".session-item-label").addEventListener("click", () => switchSession(item.session_id));
+      row.querySelector(".session-item-del").addEventListener("click", (e) => {
         e.stopPropagation();
         deleteSession(item.session_id);
       });
-      els.sessionList.appendChild(li);
+      els.sessionList.appendChild(row);
     }
   } catch (err) {
     setStatus("err", `加载会话失败: ${err.message}`);
@@ -234,8 +252,6 @@ async function refreshSessions() {
 }
 
 async function deleteSession(sessionId) {
-  const ok = confirm(`确定删除会话 ${sessionId} 吗？\n对应的 transcript 文件会被一并删除，此操作不可撤销。`);
-  if (!ok) return;
   try {
     const data = await api("/api/session/delete", {
       method: "POST",

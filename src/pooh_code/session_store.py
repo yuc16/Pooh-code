@@ -445,7 +445,7 @@ class SessionStore:
                         **meta,
                     }
                 )
-        items.sort(key=lambda item: (item["active"], item["last_active"]), reverse=True)
+        items.sort(key=lambda item: item.get("last_active", ""), reverse=True)
         return items
 
     def load_messages(self, session_key: str) -> list[dict[str, Any]]:

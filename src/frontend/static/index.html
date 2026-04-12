@@ -19,20 +19,7 @@
       </div>
 
       <div class="side-section">
-        <div class="side-header">快捷命令</div>
-        <div class="cmd-row">
-          <button class="chip" data-cmd="/help">/help</button>
-          <button class="chip" data-cmd="/ctx">/ctx</button>
-          <button class="chip" data-cmd="/sessions">/sessions</button>
-          <button class="chip" data-cmd="/skills">/skills</button>
-          <button class="chip" data-cmd="/compact">/compact</button>
-          <button class="chip" data-cmd="/clear">/clear</button>
-        </div>
-      </div>
-
-      <div class="side-section">
-        <div class="side-header">所有会话</div>
-        <ul class="session-list" id="session-list"></ul>
+        <div class="session-list" id="session-list"></div>
       </div>
 
       <div class="side-footer">
@@ -66,6 +53,17 @@
         </div>
         <aside class="chat-nav" id="chat-nav">
           <button class="nav-toggle" id="nav-toggle" title="切换导航" aria-label="切换导航">›</button>
+          <div class="chat-nav-cmds">
+            <div class="side-header">快捷命令</div>
+            <div class="cmd-row">
+              <button class="chip" data-cmd="/help">/help</button>
+              <button class="chip" data-cmd="/ctx">/ctx</button>
+              <button class="chip" data-cmd="/sessions">/sessions</button>
+              <button class="chip" data-cmd="/skills">/skills</button>
+              <button class="chip" data-cmd="/compact">/compact</button>
+              <button class="chip" data-cmd="/clear">/clear</button>
+            </div>
+          </div>
           <div class="chat-nav-list" id="chat-nav-list"></div>
         </aside>
       </div>
