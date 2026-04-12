@@ -52,13 +52,11 @@ class SkillsManager:
         return skills
 
     def list_names(self) -> list[str]:
-        if not self.skills:
-            self.discover()
+        self.discover()
         return [skill.name for skill in self.skills]
 
     def render_for_prompt(self, query: str | None = None, limit: int = 6) -> str:
-        if not self.skills:
-            self.discover()
+        self.discover()
         if not self.skills:
             return ""
         ranked = self.skills
@@ -84,8 +82,7 @@ class SkillsManager:
         return "\n".join(lines).strip()
 
     def render_metadata_for_prompt(self) -> str:
-        if not self.skills:
-            self.discover()
+        self.discover()
         if not self.skills:
             return ""
         lines = [
@@ -100,8 +97,7 @@ class SkillsManager:
         return "\n".join(lines).strip()
 
     def get_body(self, name: str) -> str:
-        if not self.skills:
-            self.discover()
+        self.discover()
         for skill in self.skills:
             if skill.name == name:
                 return skill.body or f"(skill {name} 没有正文内容)"

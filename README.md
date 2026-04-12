@@ -175,7 +175,7 @@ Skills 是一种"按需加载的操作手册"。每个 skill 是 [workplace/runt
 - **xlsx-create** —— 使用 `openpyxl` + `pandas` 生成或编辑 Excel 电子表格（.xlsx），支持公式、图表、条件格式、数据分析等
 - **pptx-create** —— 使用 `python-pptx` 生成专业 PowerPoint 演示文稿（.pptx），内置配色方案和版式指南，支持形状、表格、图表等丰富元素
 
-注意：`use_skill` 的 `enum` 在 agent 构造时固化，新增 skill 需要重启进程才会被发现。
+现在 skills 已改成按请求自动刷新：新增目录、修改 `SKILL.md`、删除 skill 后，无需重启服务，下一次请求、下一次 `/skills`、以及下一次生成 system prompt 时都会重新扫描 [workplace/runtime/skills](/Users/wangyc/Desktop/projects/Pooh-code/workplace/runtime/skills) 并更新 `use_skill` 工具的可选列表。
 
 ## 飞书
 

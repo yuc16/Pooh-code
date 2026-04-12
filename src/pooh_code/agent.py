@@ -70,31 +70,35 @@ class PoohAgent:
     def _register_skill_tool(self) -> None:
         self.skills.discover()
         available = self.skills.list_names()
-        if not available:
-            return
         names_hint = ", ".join(available)
+        name_schema: dict[str, Any] = {
+            "type": "string",
+            "description": "skill 名字,例如 github-push",
+        }
+        if available:
+            name_schema["enum"] = available
         self.tools.register_tool(
             ToolSpec(
                 name="use_skill",
                 description=(
                     "加载某个 skill 的完整指令。当用户意图匹配 system prompt 中 "
                     "## Skills 列表里某条 description 时,先调用此工具拿到完整步骤再执行。"
-                    f"当前可用 skill: {names_hint}。"
+                    f"当前可用 skill: {names_hint or '(none)'}。"
                 ),
                 input_schema={
                     "type": "object",
                     "required": ["name"],
                     "properties": {
-                        "name": {
-                            "type": "string",
-                            "description": "skill 名字,例如 github-push",
-                            "enum": available,
-                        }
+                        "name": name_schema,
                     },
                 },
             ),
             lambda name: self.skills.get_body(name),
+            replace=True,
         )
+
+    def _refresh_skills(self) -> None:
+        self._register_skill_tool()
 
     def build_session_key(
         self, channel: str, account_id: str, peer_id: str, agent_id: str | None = None
@@ -109,6 +113,7 @@ class PoohAgent:
         return "agent:" + ":".join(parts)
 
     def build_system_prompt(self, user_text: str) -> str:
+        self._refresh_skills()
         parts = [self._load_bootstrap_files(), self.skills.render_metadata_for_prompt()]
         session_key, session_output_dir = self._current_session_context()
         session_id = getattr(self._session_local, "session_id", None)
@@ -323,6 +328,7 @@ class PoohAgent:
         self._session_local.session_key = session_key
         self._session_local.session_id = actual_session_id
         try:
+            self._refresh_skills()
             self.context.model = self.config.model
             self.context.context_window = self.config.context_window
             ensure_session_output_dir(actual_session_id)
@@ -496,6 +502,7 @@ class PoohAgent:
         self._session_local.session_key = session_key
         self._session_local.session_id = session_id
         try:
+            self._refresh_skills()
             self.context.model = self.config.model
             self.context.context_window = self.config.context_window
             messages = self.sessions.load_messages(session_key, session_id=session_id)

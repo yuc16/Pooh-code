@@ -148,7 +148,9 @@ class ToolRegistry:
         self._specs.append(spec)
         self._handlers[spec.name] = handler
 
-    def register_tool(self, spec: ToolSpec, handler: Callable[..., Any]) -> None:
+    def register_tool(self, spec: ToolSpec, handler: Callable[..., Any], *, replace: bool = False) -> None:
+        if replace:
+            self._specs = [existing for existing in self._specs if existing.name != spec.name]
         self._register(spec, handler)
 
     def specs(self) -> list[dict[str, Any]]:
