@@ -12,9 +12,12 @@ Or (from the project root, so imports resolve):
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import mimetypes
 import sys
+import threading
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -215,6 +218,15 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
     def _session_key(self) -> str:
         return self.server.agent.build_session_key(WEB_CHANNEL, WEB_ACCOUNT, WEB_PEER)
 
+    def _session_id_from_query(self, parsed: Any) -> str | None:
+        qs = parse_qs(parsed.query)
+        raw = (qs.get("session_id") or [""])[0].strip()
+        return raw or None
+
+    def _session_id_from_body(self, body: dict[str, Any], session_key: str) -> str:
+        raw = str(body.get("session_id", "")).strip()
+        return raw or self.server.agent.sessions.get_session_id(session_key)
+
     # ---------- routing ----------
     def do_GET(self) -> None:  # noqa: N802
         try:
@@ -235,6 +247,8 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
             if path.startswith("/static/"):
                 return self._serve_static(path[len("/static/") :])
             self._send_error_json(404, f"not found: {path}")
+        except ValueError as exc:
+            self._send_error_json(400, str(exc))
         except Exception as exc:
             traceback.print_exc()
             self._send_error_json(500, str(exc))
@@ -257,6 +271,8 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 return self._handle_clear_session()
             if path == "/api/session/delete":
                 return self._handle_delete_session()
+            if path == "/api/session/cancel":
+                return self._handle_cancel_session()
             if path == "/api/session/compact":
                 return self._handle_compact_session()
             self._send_error_json(404, f"not found: {path}")
@@ -286,16 +302,17 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     # ---------- handlers ----------
-    def _state_payload(self) -> dict[str, Any]:
+    def _state_payload(self, session_id: str | None = None) -> dict[str, Any]:
         agent = self.server.agent
         session_key = self._session_key()
-        session_id = agent.sessions.get_session_id(session_key)
-        usage = agent.get_context_usage(session_key)
+        actual_session_id = session_id or agent.sessions.get_session_id(session_key)
+        usage = agent.get_context_usage(session_key, session_id=actual_session_id)
         return {
             "session_key": session_key,
-            "session_id": session_id,
+            "session_id": actual_session_id,
             "model": agent.config.model,
             "context_window": agent.config.context_window,
+            "running": self.server.runs.is_running(actual_session_id),
             "usage": {
                 "tokens": usage.tokens,
                 "limit": usage.limit,
@@ -304,17 +321,20 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         }
 
     def _handle_state(self) -> None:
-        self._send_json({"ok": True, **self._state_payload()})
+        parsed = urlparse(self.path)
+        self._send_json({"ok": True, **self._state_payload(self._session_id_from_query(parsed))})
 
     def _handle_messages(self) -> None:
+        parsed = urlparse(self.path)
         agent = self.server.agent
         session_key = self._session_key()
-        messages = agent.sessions.load_messages(session_key)
+        session_id = self._session_id_from_query(parsed) or agent.sessions.get_session_id(session_key)
+        messages = agent.sessions.load_messages(session_key, session_id=session_id)
         self._send_json(
             {
                 "ok": True,
                 "messages": _serialize_messages(messages),
-                **self._state_payload(),
+                **self._state_payload(session_id),
             }
         )
 
@@ -323,6 +343,8 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         session_key = self._session_key()
         # 只列出当前 web channel 下的会话，不混入 cli / feishu。
         items = agent.sessions.list_sessions(session_key=session_key)
+        for item in items:
+            item["running"] = self.server.runs.is_running(item["session_id"])
         self._send_json({"ok": True, "sessions": items, **self._state_payload()})
 
     def _handle_chat(self) -> None:
@@ -332,20 +354,25 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
             raise ValueError("text is required")
         agent = self.server.agent
         session_key = self._session_key()
-        reply = agent.ask(session_key, text)
-        state = self._state_payload()
-        self._send_json(
-            {
-                "ok": True,
-                "reply": {
-                    "text": reply.text,
-                    "session_id": reply.session_id,
-                    "model": reply.model,
-                    "compacted": reply.compacted,
-                },
-                **state,
-            }
-        )
+        session_id = self._session_id_from_body(body, session_key)
+        run = self.server.runs.start(session_id)
+        try:
+            reply = agent.ask_for_session(session_key, text, session_id=session_id)
+            state = self._state_payload(session_id)
+            self._send_json(
+                {
+                    "ok": True,
+                    "reply": {
+                        "text": reply.text,
+                        "session_id": reply.session_id,
+                        "model": reply.model,
+                        "compacted": reply.compacted,
+                    },
+                    **state,
+                }
+            )
+        finally:
+            self.server.runs.finish(run)
 
     def _handle_chat_stream(self) -> None:
         body = self._read_json_body()
@@ -354,6 +381,8 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
             raise ValueError("text is required")
         agent = self.server.agent
         session_key = self._session_key()
+        session_id = self._session_id_from_body(body, session_key)
+        run = self.server.runs.start(session_id)
 
         # Start SSE response. Force close after stream so the client's
         # reader promptly sees `done` instead of hanging on keep-alive.
@@ -385,11 +414,21 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
             _write_sse(kind, payload)
 
         try:
-            agent.ask_stream(session_key, text, on_event)
-            _write_sse("state", self._state_payload())
+            agent.ask_stream(
+                session_key,
+                text,
+                on_event,
+                session_id=session_id,
+                cancel_event=run.cancel_event,
+            )
+            _write_sse("state", self._state_payload(session_id))
+        except concurrent.futures.CancelledError:
+            _write_sse("cancelled", {"session_id": session_id})
         except Exception as exc:
             traceback.print_exc()
             _write_sse("error", {"error": str(exc)})
+        finally:
+            self.server.runs.finish(run)
 
         if not closed["v"]:
             try:
@@ -406,6 +445,11 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         if not text.startswith("/"):
             raise ValueError("command must start with /")
         session_key = self._session_key()
+        session_id = self._session_id_from_body(body, session_key)
+        if self.server.runs.is_running(session_id):
+            raise ValueError("session is running; cancel it before executing commands")
+        # CommandProcessor is still slot-oriented; keep web active session in sync for commands.
+        self.server.agent.sessions.switch_session(session_id, session_key=session_key)
         result = self.server.commands.handle(text, session_key)
         self._send_json(
             {
@@ -413,7 +457,7 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 "handled": result.handled,
                 "text": result.text,
                 "session_key": result.session_key or session_key,
-                **self._state_payload(),
+                **self._state_payload(session_id),
             }
         )
 
@@ -442,16 +486,22 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         )
 
     def _handle_clear_session(self) -> None:
+        body = self._read_json_body()
         agent = self.server.agent
         session_key = self._session_key()
-        agent.sessions.clear_session(session_key)
-        self._send_json({"ok": True, **self._state_payload()})
+        session_id = self._session_id_from_body(body, session_key)
+        if self.server.runs.is_running(session_id):
+            raise ValueError("session is running; cancel it before clearing")
+        agent.sessions.clear_session(session_key, session_id=session_id)
+        self._send_json({"ok": True, **self._state_payload(session_id)})
 
     def _handle_delete_session(self) -> None:
         body = self._read_json_body()
         session_id = str(body.get("session_id", "")).strip()
         if not session_id:
             raise ValueError("session_id is required")
+        if self.server.runs.is_running(session_id):
+            raise ValueError("session is running; cancel it before deleting")
         agent = self.server.agent
         session_key = self._session_key()
         active_id = agent.sessions.delete_session(session_key, session_id)
@@ -464,6 +514,13 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 **self._state_payload(),
             }
         )
+
+    def _handle_cancel_session(self) -> None:
+        body = self._read_json_body()
+        session_key = self._session_key()
+        session_id = self._session_id_from_body(body, session_key)
+        cancelled = self.server.runs.cancel(session_id)
+        self._send_json({"ok": True, "session_id": session_id, "cancelled": cancelled, **self._state_payload(session_id)})
 
     def _handle_files(self) -> None:
         """列出 workplace/output/ 中的文件，支持浏览和下载。"""
@@ -519,15 +576,59 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _handle_compact_session(self) -> None:
+        body = self._read_json_body()
         agent = self.server.agent
         session_key = self._session_key()
-        did = agent.compact_session(session_key, force=True)
-        self._send_json({"ok": True, "compacted": did, **self._state_payload()})
+        session_id = self._session_id_from_body(body, session_key)
+        if self.server.runs.is_running(session_id):
+            raise ValueError("session is running; cancel it before compacting")
+        did = agent.compact_session(session_key, force=True, session_id=session_id)
+        self._send_json({"ok": True, "compacted": did, **self._state_payload(session_id)})
 
 
 class PoohFrontendServer(ThreadingHTTPServer):
     agent: PoohAgent
     commands: CommandProcessor
+    runs: "RunRegistry"
+
+
+class SessionRun:
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
+        self.started_at = time.time()
+        self.cancel_event = threading.Event()
+
+
+class RunRegistry:
+    def __init__(self) -> None:
+        self._runs: dict[str, SessionRun] = {}
+        self._lock = threading.Lock()
+
+    def start(self, session_id: str) -> SessionRun:
+        with self._lock:
+            if session_id in self._runs:
+                raise ValueError(f"session {session_id} is already running")
+            run = SessionRun(session_id)
+            self._runs[session_id] = run
+            return run
+
+    def finish(self, run: SessionRun) -> None:
+        with self._lock:
+            current = self._runs.get(run.session_id)
+            if current is run:
+                self._runs.pop(run.session_id, None)
+
+    def cancel(self, session_id: str) -> bool:
+        with self._lock:
+            run = self._runs.get(session_id)
+            if not run:
+                return False
+            run.cancel_event.set()
+            return True
+
+    def is_running(self, session_id: str) -> bool:
+        with self._lock:
+            return session_id in self._runs
 
 
 def build_server(host: str, port: int, *, config_path: Path | None = None) -> PoohFrontendServer:
@@ -537,6 +638,7 @@ def build_server(host: str, port: int, *, config_path: Path | None = None) -> Po
     server = PoohFrontendServer((host, port), PoohFrontendHandler)
     server.agent = agent
     server.commands = commands
+    server.runs = RunRegistry()
     return server
 
 

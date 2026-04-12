@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -67,6 +68,7 @@ class _MessagesAPI:
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         on_event: Any = None,
+        cancel_event: threading.Event | None = None,
         **_: Any,
     ) -> MessageResponse:
         instructions, input_items = _convert_messages(messages, system)
@@ -103,6 +105,7 @@ class _MessagesAPI:
                 timeout_seconds=self._client.timeout_seconds,
                 verify_ssl=self._client.verify_ssl,
                 on_event=on_event,
+                cancel_event=cancel_event,
             )
         except RuntimeError as exc:
             should_retry = (
@@ -125,6 +128,7 @@ class _MessagesAPI:
                 timeout_seconds=self._client.timeout_seconds,
                 verify_ssl=self._client.verify_ssl,
                 on_event=on_event,
+                cancel_event=cancel_event,
             )
 
         blocks: list[Any] = []
@@ -245,6 +249,7 @@ def _request_codex(
     timeout_seconds: float,
     verify_ssl: bool,
     on_event: Any = None,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[str, list[dict[str, Any]], str, dict[str, Any] | None]:
     attempts = 3
     last_exc: Exception | None = None
@@ -258,6 +263,7 @@ def _request_codex(
                 timeout_seconds=timeout_seconds,
                 verify_ssl=current_verify_ssl,
                 on_event=on_event,
+                cancel_event=cancel_event,
             )
         except Exception as exc:
             last_exc = exc
@@ -281,18 +287,20 @@ def _request_codex_once(
     timeout_seconds: float,
     verify_ssl: bool,
     on_event: Any = None,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[str, list[dict[str, Any]], str, dict[str, Any] | None]:
     with httpx.Client(timeout=timeout_seconds, verify=verify_ssl) as client:
         with client.stream("POST", url, headers=headers, json=body) as response:
             if response.status_code != 200:
                 raw = response.read().decode("utf-8", "ignore")
                 raise RuntimeError(_friendly_error(response.status_code, raw))
-            return _consume_sse(response, on_event=on_event)
+            return _consume_sse(response, on_event=on_event, cancel_event=cancel_event)
 
 
 def _consume_sse(
     response: httpx.Response,
     on_event: Any = None,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[str, list[dict[str, Any]], str, dict[str, Any] | None]:
     content = ""
     tool_calls: list[dict[str, Any]] = []
@@ -308,7 +316,9 @@ def _consume_sse(
         except Exception:
             pass
 
-    for event in _iter_sse(response):
+    for event in _iter_sse(response, cancel_event=cancel_event):
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError("OpenAI Codex response cancelled.")
         event_type = event.get("type")
         if event_type == "response.output_item.added":
             item = event.get("item") or {}
@@ -396,9 +406,12 @@ def _consume_sse(
     return content, tool_calls, finish_reason, usage
 
 
-def _iter_sse(response: httpx.Response):
+def _iter_sse(response: httpx.Response, cancel_event: threading.Event | None = None):
     buffer: list[str] = []
     for line in response.iter_lines():
+        if cancel_event is not None and cancel_event.is_set():
+            response.close()
+            raise RuntimeError("OpenAI Codex response cancelled.")
         if line == "":
             if not buffer:
                 continue

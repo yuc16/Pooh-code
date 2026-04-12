@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -23,10 +24,20 @@ def _session_group(session_key: str) -> str:
     return "unknown"
 
 
+def _content_has_tool_use(content: Any) -> bool:
+    if not isinstance(content, list):
+        return False
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "tool_use":
+            return True
+    return False
+
+
 class SessionStore:
     def __init__(self, agent_id: str = "main") -> None:
         ensure_runtime_dirs()
         self.agent_id = agent_id
+        self._lock = threading.RLock()
         self.base_dir = SESSIONS_DIR / agent_id
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.index_path = self.base_dir / "sessions.json"
@@ -204,6 +215,15 @@ class SessionStore:
         active_session_id = slot["active_session_id"]
         return slot["sessions"][active_session_id]
 
+    def _session_meta(self, session_key: str, session_id: str | None = None) -> dict[str, Any]:
+        slot = self._get_slot(session_key)
+        target_id = session_id or slot["active_session_id"]
+        sessions = slot.get("sessions") or {}
+        meta = sessions.get(target_id)
+        if not isinstance(meta, dict):
+            raise ValueError(f"session_id not found: {target_id}")
+        return meta
+
     def _ensure_session_dir(self, session_key: str, session_id: str) -> None:
         session_dir = self._session_dir(session_key, session_id)
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -275,66 +295,72 @@ class SessionStore:
             if changed:
                 transcript_path.write_text("\n".join(lines_out) + "\n", encoding="utf-8")
 
-    def ensure_session(self, session_key: str, label: str = "") -> str:
-        slot = self._get_slot(session_key, label=label)
-        active_session_id = slot["active_session_id"]
-        self._ensure_session_dir(session_key, active_session_id)
-        return active_session_id
+    def ensure_session(self, session_key: str, label: str = "", session_id: str | None = None) -> str:
+        with self._lock:
+            slot = self._get_slot(session_key, label=label)
+            target_id = session_id or slot["active_session_id"]
+            if target_id not in slot["sessions"]:
+                raise ValueError(f"session_id not found: {target_id}")
+            self._ensure_session_dir(session_key, target_id)
+            return target_id
 
     def get_session_id(self, session_key: str) -> str:
-        return self.ensure_session(session_key)
+        with self._lock:
+            return self.ensure_session(session_key)
 
     def new_session(self, session_key: str, label: str = "") -> str:
-        slot = self._get_slot(session_key, label=label)
-        meta = self._create_session_meta(label=label)
-        session_id = meta["session_id"]
-        slot["sessions"][session_id] = meta
-        slot["active_session_id"] = session_id
-        self._ensure_session_dir(session_key, session_id)
-        self._save_index()
-        return session_id
+        with self._lock:
+            slot = self._get_slot(session_key, label=label)
+            meta = self._create_session_meta(label=label)
+            session_id = meta["session_id"]
+            slot["sessions"][session_id] = meta
+            slot["active_session_id"] = session_id
+            self._ensure_session_dir(session_key, session_id)
+            self._save_index()
+            return session_id
 
     def switch_session(self, session_id_prefix: str, session_key: str | None = None) -> tuple[str, str]:
-        prefix = session_id_prefix.strip()
-        if not prefix:
-            raise ValueError("usage: /switch <session_id_prefix>")
-        matches: list[tuple[str, str]] = []
-        keys = [session_key] if session_key else list(self._index.keys())
-        for key in keys:
-            slot = self._get_slot(key) if session_key else self._index.get(key)
-            if not isinstance(slot, dict):
-                continue
-            for session_id in slot.get("sessions", {}):
-                if session_id.startswith(prefix):
-                    matches.append((key, session_id))
-        if not matches:
-            raise ValueError(f"no session matches prefix: {prefix}")
-        if len(matches) > 1:
-            raise ValueError(
-                "multiple sessions match prefix: "
-                + ", ".join(f"{matched_id} ({matched_key})" for matched_key, matched_id in matches)
-            )
-        target_session_key, session_id = matches[0]
-        slot = self._get_slot(target_session_key)
-        slot["active_session_id"] = session_id
-        slot["sessions"][session_id]["last_active"] = shanghai_now_iso()
-        self._ensure_session_dir(target_session_key, session_id)
-        self._save_index()
-        return target_session_key, session_id
+        with self._lock:
+            prefix = session_id_prefix.strip()
+            if not prefix:
+                raise ValueError("usage: /switch <session_id_prefix>")
+            matches: list[tuple[str, str]] = []
+            keys = [session_key] if session_key else list(self._index.keys())
+            for key in keys:
+                slot = self._get_slot(key) if session_key else self._index.get(key)
+                if not isinstance(slot, dict):
+                    continue
+                for session_id in slot.get("sessions", {}):
+                    if session_id.startswith(prefix):
+                        matches.append((key, session_id))
+            if not matches:
+                raise ValueError(f"no session matches prefix: {prefix}")
+            if len(matches) > 1:
+                raise ValueError(
+                    "multiple sessions match prefix: "
+                    + ", ".join(f"{matched_id} ({matched_key})" for matched_key, matched_id in matches)
+                )
+            target_session_key, session_id = matches[0]
+            slot = self._get_slot(target_session_key)
+            slot["active_session_id"] = session_id
+            self._ensure_session_dir(target_session_key, session_id)
+            self._save_index()
+            return target_session_key, session_id
 
-    def append_message(self, session_key: str, role: str, content: Any) -> None:
-        session_id = self.ensure_session(session_key)
-        record = {
-            "type": role,
-            "content": content,
-            "ts": shanghai_now_iso(),
-        }
-        with open(self._transcript_path(session_key, session_id), "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-        meta = self._active_session_meta(session_key)
-        meta["last_active"] = shanghai_now_iso()
-        meta["message_count"] += 1
-        self._save_index()
+    def append_message(self, session_key: str, role: str, content: Any, session_id: str | None = None) -> None:
+        with self._lock:
+            actual_session_id = self.ensure_session(session_key, session_id=session_id)
+            record = {
+                "type": role,
+                "content": content,
+                "ts": shanghai_now_iso(),
+            }
+            with open(self._transcript_path(session_key, actual_session_id), "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            meta = self._session_meta(session_key, actual_session_id)
+            meta["last_active"] = shanghai_now_iso()
+            meta["message_count"] += 1
+            self._save_index()
 
     def delete_session(self, session_key: str, session_id: str) -> str:
         """删除指定 session_id 的 transcript 目录及索引记录。
@@ -342,128 +368,168 @@ class SessionStore:
         返回删除完成后该 slot 的 active_session_id。如果被删的是最后一条，
         会自动创建一个新的空白会话以保证 slot 可继续使用。
         """
-        slot = self._get_slot(session_key)
-        sessions = slot.get("sessions") or {}
-        if session_id not in sessions:
-            raise ValueError(f"session_id not found: {session_id}")
+        with self._lock:
+            slot = self._get_slot(session_key)
+            sessions = slot.get("sessions") or {}
+            if session_id not in sessions:
+                raise ValueError(f"session_id not found: {session_id}")
 
-        target_dir = self._session_dir(session_key, session_id)
-        if target_dir.exists():
-            shutil.rmtree(target_dir, ignore_errors=True)
+            target_dir = self._session_dir(session_key, session_id)
+            if target_dir.exists():
+                shutil.rmtree(target_dir, ignore_errors=True)
 
-        sessions.pop(session_id, None)
+            sessions.pop(session_id, None)
 
-        if not sessions:
-            # 最后一条被删，创建一个新的空白会话保持 slot 可用。
-            meta = self._create_session_meta()
-            new_id = meta["session_id"]
-            sessions[new_id] = meta
-            slot["active_session_id"] = new_id
-            self._ensure_session_dir(session_key, new_id)
-        elif slot.get("active_session_id") == session_id:
-            # 被删的是当前会话，切到剩余里最新活跃的那条。
-            remaining = sorted(
-                sessions.items(),
-                key=lambda kv: kv[1].get("last_active", ""),
-                reverse=True,
-            )
-            slot["active_session_id"] = remaining[0][0]
+            if not sessions:
+                meta = self._create_session_meta()
+                new_id = meta["session_id"]
+                sessions[new_id] = meta
+                slot["active_session_id"] = new_id
+                self._ensure_session_dir(session_key, new_id)
+            elif slot.get("active_session_id") == session_id:
+                remaining = sorted(
+                    sessions.items(),
+                    key=lambda kv: kv[1].get("last_active", ""),
+                    reverse=True,
+                )
+                slot["active_session_id"] = remaining[0][0]
 
-        self._save_index()
-        return slot["active_session_id"]
+            self._save_index()
+            return slot["active_session_id"]
 
     def set_label(self, session_key: str, label: str, session_id: str | None = None) -> None:
-        slot = self._get_slot(session_key)
-        target_id = session_id or slot["active_session_id"]
-        sessions = slot.get("sessions") or {}
-        if target_id in sessions:
-            sessions[target_id]["label"] = label
-        self._save_index()
+        with self._lock:
+            meta = self._session_meta(session_key, session_id)
+            meta["label"] = label
+            self._save_index()
 
     def get_label(self, session_key: str, session_id: str | None = None) -> str:
-        slot = self._get_slot(session_key)
-        target_id = session_id or slot["active_session_id"]
-        sessions = slot.get("sessions") or {}
-        meta = sessions.get(target_id, {})
-        return meta.get("label", "")
+        with self._lock:
+            return self._session_meta(session_key, session_id).get("label", "")
 
-    def clear_session(self, session_key: str) -> str:
-        session_id = self.ensure_session(session_key)
-        self._transcript_path(session_key, session_id).write_text("", encoding="utf-8")
-        meta = self._active_session_meta(session_key)
-        meta["last_active"] = shanghai_now_iso()
-        meta["message_count"] = 0
-        meta["last_usage"] = None
-        self._save_index()
-        return session_id
+    def clear_session(self, session_key: str, session_id: str | None = None) -> str:
+        with self._lock:
+            actual_session_id = self.ensure_session(session_key, session_id=session_id)
+            self._transcript_path(session_key, actual_session_id).write_text("", encoding="utf-8")
+            meta = self._session_meta(session_key, actual_session_id)
+            meta["last_active"] = shanghai_now_iso()
+            meta["message_count"] = 0
+            meta["last_usage"] = None
+            self._save_index()
+            return actual_session_id
 
-    def replace_messages(self, session_key: str, messages: list[dict[str, Any]]) -> None:
-        session_id = self.ensure_session(session_key)
-        path = self._transcript_path(session_key, session_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as handle:
-            for message in messages:
-                record = {
-                    "type": message.get("role", "user"),
-                    "content": message.get("content", ""),
-                    "ts": shanghai_now_iso(),
-                }
-                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-        meta = self._active_session_meta(session_key)
-        meta["last_active"] = shanghai_now_iso()
-        meta["message_count"] = len(messages)
-        meta["last_usage"] = None
-        self._save_index()
+    def replace_messages(
+        self,
+        session_key: str,
+        messages: list[dict[str, Any]],
+        session_id: str | None = None,
+    ) -> None:
+        with self._lock:
+            actual_session_id = self.ensure_session(session_key, session_id=session_id)
+            path = self._transcript_path(session_key, actual_session_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                for message in messages:
+                    record = {
+                        "type": message.get("role", "user"),
+                        "content": message.get("content", ""),
+                        "ts": shanghai_now_iso(),
+                    }
+                    handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            meta = self._session_meta(session_key, actual_session_id)
+            meta["last_active"] = shanghai_now_iso()
+            meta["message_count"] = len(messages)
+            meta["last_usage"] = None
+            self._save_index()
 
-    def get_last_usage(self, session_key: str) -> dict[str, Any] | None:
-        return self._active_session_meta(session_key).get("last_usage")
+    def get_last_usage(self, session_key: str, session_id: str | None = None) -> dict[str, Any] | None:
+        with self._lock:
+            return self._session_meta(session_key, session_id).get("last_usage")
 
-    def set_last_usage(self, session_key: str, usage: dict[str, Any] | None) -> None:
-        meta = self._active_session_meta(session_key)
-        meta["last_usage"] = usage
-        meta["last_active"] = shanghai_now_iso()
-        self._save_index()
+    def set_last_usage(
+        self,
+        session_key: str,
+        usage: dict[str, Any] | None,
+        session_id: str | None = None,
+    ) -> None:
+        with self._lock:
+            meta = self._session_meta(session_key, session_id)
+            meta["last_usage"] = usage
+            meta["last_active"] = shanghai_now_iso()
+            self._save_index()
 
-    def invalidate_last_usage(self, session_key: str) -> None:
-        self.set_last_usage(session_key, None)
+    def invalidate_last_usage(self, session_key: str, session_id: str | None = None) -> None:
+        self.set_last_usage(session_key, None, session_id=session_id)
 
     def list_sessions(self, session_key: str | None = None) -> list[dict[str, Any]]:
-        items: list[dict[str, Any]] = []
-        keys = [session_key] if session_key else list(self._index.keys())
-        for key in keys:
-            slot = self._get_slot(key) if session_key else self._index.get(key)
-            if not isinstance(slot, dict):
-                continue
-            active_session_id = slot.get("active_session_id")
-            for session_id, meta in slot.get("sessions", {}).items():
-                if not isinstance(meta, dict):
+        with self._lock:
+            items: list[dict[str, Any]] = []
+            keys = [session_key] if session_key else list(self._index.keys())
+            for key in keys:
+                slot = self._get_slot(key) if session_key else self._index.get(key)
+                if not isinstance(slot, dict):
                     continue
-                items.append(
+                active_session_id = slot.get("active_session_id")
+                for session_id, meta in slot.get("sessions", {}).items():
+                    if not isinstance(meta, dict):
+                        continue
+                    items.append(
+                        {
+                            "session_key": key,
+                            "active": session_id == active_session_id,
+                            **meta,
+                        }
+                    )
+            items.sort(key=lambda item: item.get("last_active", ""), reverse=True)
+            return items
+
+    def load_messages(self, session_key: str, session_id: str | None = None) -> list[dict[str, Any]]:
+        with self._lock:
+            actual_session_id = self.ensure_session(session_key, session_id=session_id)
+            path = self._transcript_path(session_key, actual_session_id)
+            if not path.exists():
+                return []
+            records: list[dict[str, Any]] = []
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except Exception:
+                    continue
+                role = record.get("type")
+                if role not in {"user", "assistant", "system"}:
+                    continue
+                records.append(
                     {
-                        "session_key": key,
-                        "active": session_id == active_session_id,
-                        **meta,
+                        "type": role,
+                        "content": record.get("content", ""),
+                        "ts": record.get("ts") or shanghai_now_iso(),
                     }
                 )
-        items.sort(key=lambda item: item.get("last_active", ""), reverse=True)
-        return items
 
-    def load_messages(self, session_key: str) -> list[dict[str, Any]]:
-        session_id = self.ensure_session(session_key)
-        path = self._transcript_path(session_key, session_id)
-        if not path.exists():
-            return []
-        messages: list[dict[str, Any]] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except Exception:
-                continue
-            role = record.get("type")
-            if role not in {"user", "assistant", "system"}:
-                continue
-            messages.append({"role": role, "content": record.get("content", "")})
-        return messages
+            # If the transcript ends with an assistant tool_use turn but the matching
+            # tool_result user turn was never flushed, drop that dangling assistant turn.
+            repaired = False
+            while records:
+                last = records[-1]
+                if last.get("type") != "assistant":
+                    break
+                if not _content_has_tool_use(last.get("content")):
+                    break
+                records.pop()
+                repaired = True
+
+            if repaired:
+                with open(path, "w", encoding="utf-8") as handle:
+                    for record in records:
+                        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                meta = self._session_meta(session_key, actual_session_id)
+                meta["message_count"] = len(records)
+                self._save_index()
+
+            messages: list[dict[str, Any]] = []
+            for record in records:
+                messages.append({"role": record["type"], "content": record.get("content", "")})
+            return messages

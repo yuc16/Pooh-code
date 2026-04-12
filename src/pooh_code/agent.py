@@ -23,6 +23,10 @@ from .time_utils import SHANGHAI_TZ_NAME, shanghai_now_iso
 from .tooling import ToolRegistry
 
 
+def _is_cancelled_error(exc: Exception) -> bool:
+    return "cancelled" in str(exc).lower()
+
+
 class PoohAgent:
     def __init__(
         self,
@@ -59,7 +63,7 @@ class PoohAgent:
         session_key = getattr(self._session_local, "session_key", None)
         if not session_key:
             return None, None
-        session_id = self.sessions.get_session_id(session_key)
+        session_id = getattr(self._session_local, "session_id", None) or self.sessions.get_session_id(session_key)
         output_dir = str(ensure_session_output_dir(session_id))
         return session_key, output_dir
 
@@ -107,7 +111,9 @@ class PoohAgent:
     def build_system_prompt(self, user_text: str) -> str:
         parts = [self._load_bootstrap_files(), self.skills.render_metadata_for_prompt()]
         session_key, session_output_dir = self._current_session_context()
-        session_id = self.sessions.get_session_id(session_key) if session_key else None
+        session_id = getattr(self._session_local, "session_id", None)
+        if session_key and not session_id:
+            session_id = self.sessions.get_session_id(session_key)
         runtime = {
             "agent_name": self.config.name,
             "agent_id": self.agent_id,
@@ -146,25 +152,29 @@ class PoohAgent:
         return "\n\n".join(sections)
 
     def get_context_usage(
-        self, session_key: str, pending_user_text: str = "", user_text_for_prompt: str = ""
+        self,
+        session_key: str,
+        pending_user_text: str = "",
+        user_text_for_prompt: str = "",
+        session_id: str | None = None,
     ) -> ContextUsage:
         self.context.model = self.config.model
         self.context.context_window = self.config.context_window
         if not pending_user_text:
-            usage = self.sessions.get_last_usage(session_key)
+            usage = self.sessions.get_last_usage(session_key, session_id=session_id)
             real_total_tokens = None
             if isinstance(usage, dict):
                 raw = usage.get("total_tokens")
                 if isinstance(raw, int):
                     real_total_tokens = raw
             return self.context.usage_from_real_tokens(real_total_tokens)
-        messages = self.sessions.load_messages(session_key)
+        messages = self.sessions.load_messages(session_key, session_id=session_id)
         if pending_user_text:
             messages = [*messages, {"role": "user", "content": pending_user_text}]
         return self.context.usage(messages, self.build_system_prompt(user_text_for_prompt))
 
-    def _get_real_total_tokens(self, session_key: str) -> int | None:
-        usage = self.sessions.get_last_usage(session_key)
+    def _get_real_total_tokens(self, session_key: str, session_id: str | None = None) -> int | None:
+        usage = self.sessions.get_last_usage(session_key, session_id=session_id)
         if isinstance(usage, dict):
             raw = usage.get("total_tokens")
             if isinstance(raw, int) and raw > 0:
@@ -177,14 +187,15 @@ class PoohAgent:
         *,
         user_text_for_prompt: str = "",
         force: bool = False,
+        session_id: str | None = None,
     ) -> bool:
         self.context.model = self.config.model
         self.context.context_window = self.config.context_window
-        messages = self.sessions.load_messages(session_key)
+        messages = self.sessions.load_messages(session_key, session_id=session_id)
         if not messages:
             return False
         system_prompt = self.build_system_prompt(user_text_for_prompt)
-        real_tokens = self._get_real_total_tokens(session_key)
+        real_tokens = self._get_real_total_tokens(session_key, session_id=session_id)
         if not force and not self.context.should_compact(
             messages, system_prompt, real_total_tokens=real_tokens
         ):
@@ -192,8 +203,8 @@ class PoohAgent:
         compacted = self.context.compact_messages(messages, system_prompt)
         if compacted == messages:
             return False
-        self.sessions.replace_messages(session_key, compacted)
-        self.sessions.invalidate_last_usage(session_key)
+        self.sessions.replace_messages(session_key, compacted, session_id=session_id)
+        self.sessions.invalidate_last_usage(session_key, session_id=session_id)
         return True
 
     def _spawn_agent(
@@ -246,9 +257,15 @@ class PoohAgent:
         finally:
             self._session_local.session_key = previous
 
-    def _maybe_generate_title(self, session_key: str, user_text: str, reply_text: str) -> None:
+    def _maybe_generate_title(
+        self,
+        session_key: str,
+        user_text: str,
+        reply_text: str,
+        session_id: str | None = None,
+    ) -> None:
         """If this is the first Q&A in the session (no label yet), generate a short title."""
-        existing = self.sessions.get_label(session_key)
+        existing = self.sessions.get_label(session_key, session_id=session_id)
         if existing:
             return
         try:
@@ -269,7 +286,7 @@ class PoohAgent:
                     title += getattr(block, "text", "")
             title = title.strip().strip('"').strip("'").strip("《").strip("》")
             if title:
-                self.sessions.set_label(session_key, title)
+                self.sessions.set_label(session_key, title, session_id=session_id)
         except Exception:
             pass
 
@@ -278,6 +295,9 @@ class PoohAgent:
         session_key: str,
         user_text: str,
         on_event: Any,
+        *,
+        session_id: str | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> AgentReply:
         """Streaming variant of `ask`.
 
@@ -297,222 +317,291 @@ class PoohAgent:
             except Exception:
                 pass
 
+        actual_session_id = session_id or self.sessions.get_session_id(session_key)
+        previous_session_key = getattr(self._session_local, "session_key", None)
+        previous_session_id = getattr(self._session_local, "session_id", None)
         self._session_local.session_key = session_key
-        self.context.model = self.config.model
-        self.context.context_window = self.config.context_window
-        ensure_session_output_dir(self.sessions.get_session_id(session_key))
+        self._session_local.session_id = actual_session_id
+        try:
+            self.context.model = self.config.model
+            self.context.context_window = self.config.context_window
+            ensure_session_output_dir(actual_session_id)
 
-        self.sessions.append_message(session_key, "user", user_text)
+            self.sessions.append_message(session_key, "user", user_text, session_id=actual_session_id)
 
-        compacted = self.compact_session(
-            session_key,
-            user_text_for_prompt=user_text,
-            force=False,
-        )
-        if compacted:
-            _emit(
-                "compacted",
-                {"display": self.get_context_usage(session_key).display},
+            compacted = self.compact_session(
+                session_key,
+                user_text_for_prompt=user_text,
+                force=False,
+                session_id=actual_session_id,
             )
-
-        final_text = ""
-        for turn_idx in range(self.config.max_turns):
-            messages = self.sessions.load_messages(session_key)
-            system_prompt = self.build_system_prompt(user_text)
-            if self.context.should_compact(
-                messages, system_prompt, real_total_tokens=self._get_real_total_tokens(session_key)
-            ):
-                self.compact_session(
-                    session_key, user_text_for_prompt=user_text, force=True
-                )
-                messages = self.sessions.load_messages(session_key)
+            if compacted:
                 _emit(
                     "compacted",
-                    {"display": self.get_context_usage(session_key).display},
+                    {"display": self.get_context_usage(session_key, session_id=actual_session_id).display},
                 )
 
-            _emit("turn_start", {"turn": turn_idx + 1})
-
-            response = self.client.messages.create(
-                model=self.config.model,
-                system=system_prompt,
-                messages=messages,
-                tools=self.tools.specs(),
-                max_tokens=4096,
-                on_event=on_event,
-            )
-            if response.usage:
-                self.sessions.set_last_usage(session_key, response.usage)
-
-            assistant_blocks: list[dict[str, Any]] = []
-            tool_result_blocks: list[dict[str, Any]] = []
-            for block in response.content:
-                if getattr(block, "type", None) == "text":
-                    text = getattr(block, "text", "")
-                    if text:
-                        final_text += text
-                        assistant_blocks.append({"type": "text", "text": text})
-                elif getattr(block, "type", None) == "tool_use":
-                    assistant_blocks.append(
-                        {
-                            "type": "tool_use",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        }
+            final_text = ""
+            for turn_idx in range(self.config.max_turns):
+                if cancel_event and cancel_event.is_set():
+                    final_text += "\n\n[任务已取消]"
+                    _emit("cancelled", {"session_id": actual_session_id})
+                    break
+                messages = self.sessions.load_messages(session_key, session_id=actual_session_id)
+                system_prompt = self.build_system_prompt(user_text)
+                if self.context.should_compact(
+                    messages,
+                    system_prompt,
+                    real_total_tokens=self._get_real_total_tokens(session_key, session_id=actual_session_id),
+                ):
+                    self.compact_session(
+                        session_key,
+                        user_text_for_prompt=user_text,
+                        force=True,
+                        session_id=actual_session_id,
                     )
-                    result = self.tools.execute(block.name, block.input)
-                    is_error = result.startswith("Tool ") or result.startswith(
-                        "Unknown tool"
-                    )
+                    messages = self.sessions.load_messages(session_key, session_id=actual_session_id)
                     _emit(
-                        "tool_result",
-                        {
-                            "tool_use_id": block.id,
-                            "name": block.name,
-                            "content": result,
-                            "is_error": is_error,
-                        },
+                        "compacted",
+                        {"display": self.get_context_usage(session_key, session_id=actual_session_id).display},
                     )
-                    tool_result_blocks.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result,
-                            "is_error": is_error,
-                        }
+                _emit("turn_start", {"turn": turn_idx + 1})
+
+                try:
+                    response = self.client.messages.create(
+                        model=self.config.model,
+                        system=system_prompt,
+                        messages=messages,
+                        tools=self.tools.specs(),
+                        max_tokens=4096,
+                        on_event=on_event,
+                        cancel_event=cancel_event,
+                    )
+                except RuntimeError as exc:
+                    if _is_cancelled_error(exc):
+                        final_text += "\n\n[任务已取消]"
+                        _emit("cancelled", {"session_id": actual_session_id})
+                        break
+                    raise
+                if response.usage:
+                    self.sessions.set_last_usage(session_key, response.usage, session_id=actual_session_id)
+
+                assistant_blocks: list[dict[str, Any]] = []
+                tool_result_blocks: list[dict[str, Any]] = []
+                for block in response.content:
+                    if getattr(block, "type", None) == "text":
+                        text = getattr(block, "text", "")
+                        if text:
+                            final_text += text
+                            assistant_blocks.append({"type": "text", "text": text})
+                    elif getattr(block, "type", None) == "tool_use":
+                        assistant_blocks.append(
+                            {
+                                "type": "tool_use",
+                                "id": block.id,
+                                "name": block.name,
+                                "input": block.input,
+                            }
+                        )
+                        result = self.tools.execute(block.name, block.input)
+                        is_error = result.startswith("Tool ") or result.startswith(
+                            "Unknown tool"
+                        )
+                        _emit(
+                            "tool_result",
+                            {
+                                "tool_use_id": block.id,
+                                "name": block.name,
+                                "content": result,
+                                "is_error": is_error,
+                            },
+                        )
+                        tool_result_blocks.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": result,
+                                "is_error": is_error,
+                            }
+                        )
+
+                if assistant_blocks:
+                    self.sessions.append_message(
+                        session_key,
+                        "assistant",
+                        assistant_blocks,
+                        session_id=actual_session_id,
                     )
 
-            if assistant_blocks:
-                self.sessions.append_message(session_key, "assistant", assistant_blocks)
+                if response.stop_reason != "tool_use":
+                    break
 
-            if response.stop_reason != "tool_use":
-                break
+                if tool_result_blocks:
+                    self.sessions.append_message(
+                        session_key,
+                        "user",
+                        tool_result_blocks,
+                        session_id=actual_session_id,
+                    )
+            else:
+                # for 循环正常跑完意味着跑满 max_turns 还在 tool_use,被强制截断
+                note = (
+                    f"\n\n[已达到 max_turns={self.config.max_turns} 上限,任务被截断。"
+                    f"再发一条消息可让我继续。]"
+                )
+                final_text += note
+                _emit("truncated", {"max_turns": self.config.max_turns})
 
-            if tool_result_blocks:
-                self.sessions.append_message(session_key, "user", tool_result_blocks)
-        else:
-            # for 循环正常跑完意味着跑满 max_turns 还在 tool_use,被强制截断
-            note = (
-                f"\n\n[已达到 max_turns={self.config.max_turns} 上限,任务被截断。"
-                f"再发一条消息可让我继续。]"
+            if not final_text.strip():
+                final_text = "(empty response)"
+            session_id = actual_session_id
+
+            # Generate title before emitting done, so client receives it in the stream.
+            self._maybe_generate_title(session_key, user_text, final_text, session_id=actual_session_id)
+            label = self.sessions.get_label(session_key, session_id=actual_session_id)
+
+            done_payload: dict[str, Any] = {
+                "text": final_text.strip(),
+                "session_id": session_id,
+                "compacted": compacted,
+            }
+            if label:
+                done_payload["title"] = label
+            _emit("done", done_payload)
+
+            return AgentReply(
+                text=final_text.strip(),
+                session_key=session_key,
+                session_id=session_id,
+                model=self.config.model,
+                compacted=compacted,
             )
-            final_text += note
-            _emit("truncated", {"max_turns": self.config.max_turns})
-
-        if not final_text.strip():
-            final_text = "(empty response)"
-        session_id = self.sessions.get_session_id(session_key)
-
-        # Generate title before emitting done, so client receives it in the stream.
-        self._maybe_generate_title(session_key, user_text, final_text)
-        label = self.sessions.get_label(session_key)
-
-        done_payload: dict[str, Any] = {
-            "text": final_text.strip(),
-            "session_id": session_id,
-            "compacted": compacted,
-        }
-        if label:
-            done_payload["title"] = label
-        _emit("done", done_payload)
-
-        return AgentReply(
-            text=final_text.strip(),
-            session_key=session_key,
-            session_id=session_id,
-            model=self.config.model,
-            compacted=compacted,
-        )
+        finally:
+            self._session_local.session_key = previous_session_key
+            self._session_local.session_id = previous_session_id
 
     def ask(self, session_key: str, user_text: str) -> AgentReply:
+        actual_session_id = self.sessions.get_session_id(session_key)
+        return self.ask_for_session(session_key, user_text, session_id=actual_session_id)
+
+    def ask_for_session(
+        self,
+        session_key: str,
+        user_text: str,
+        *,
+        session_id: str,
+    ) -> AgentReply:
+        previous_session_key = getattr(self._session_local, "session_key", None)
+        previous_session_id = getattr(self._session_local, "session_id", None)
         self._session_local.session_key = session_key
-        self.context.model = self.config.model
-        self.context.context_window = self.config.context_window
-        messages = self.sessions.load_messages(session_key)
-        session_id = self.sessions.get_session_id(session_key)
-        ensure_session_output_dir(session_id)
-        self.sessions.append_message(session_key, "user", user_text)
-        messages.append({"role": "user", "content": user_text})
+        self._session_local.session_id = session_id
+        try:
+            self.context.model = self.config.model
+            self.context.context_window = self.config.context_window
+            messages = self.sessions.load_messages(session_key, session_id=session_id)
+            ensure_session_output_dir(session_id)
+            self.sessions.append_message(session_key, "user", user_text, session_id=session_id)
+            messages.append({"role": "user", "content": user_text})
 
-        compacted = self.compact_session(
-            session_key,
-            user_text_for_prompt=user_text,
-            force=False,
-        )
-        if compacted:
-            messages = self.sessions.load_messages(session_key)
+            compacted = self.compact_session(
+                session_key,
+                user_text_for_prompt=user_text,
+                force=False,
+                session_id=session_id,
+            )
+            if compacted:
+                messages = self.sessions.load_messages(session_key, session_id=session_id)
 
-        final_text = ""
-        for _ in range(self.config.max_turns):
-            messages = self.sessions.load_messages(session_key)
-            system_prompt = self.build_system_prompt(user_text)
-            if self.context.should_compact(
-                messages, system_prompt, real_total_tokens=self._get_real_total_tokens(session_key)
-            ):
-                self.compact_session(session_key, user_text_for_prompt=user_text, force=True)
-                messages = self.sessions.load_messages(session_key)
+            final_text = ""
+            for _ in range(self.config.max_turns):
+                messages = self.sessions.load_messages(session_key, session_id=session_id)
+                system_prompt = self.build_system_prompt(user_text)
+                if self.context.should_compact(
+                    messages,
+                    system_prompt,
+                    real_total_tokens=self._get_real_total_tokens(session_key, session_id=session_id),
+                ):
+                    self.compact_session(
+                        session_key,
+                        user_text_for_prompt=user_text,
+                        force=True,
+                        session_id=session_id,
+                    )
+                    messages = self.sessions.load_messages(session_key, session_id=session_id)
 
-            response = self.client.messages.create(
+                response = self.client.messages.create(
+                    model=self.config.model,
+                    system=system_prompt,
+                    messages=messages,
+                    tools=self.tools.specs(),
+                    max_tokens=4096,
+                )
+                if response.usage:
+                    self.sessions.set_last_usage(session_key, response.usage, session_id=session_id)
+                assistant_blocks: list[dict[str, Any]] = []
+                tool_result_blocks: list[dict[str, Any]] = []
+                for block in response.content:
+                    if getattr(block, "type", None) == "text":
+                        text = getattr(block, "text", "")
+                        if text:
+                            final_text += text
+                            assistant_blocks.append({"type": "text", "text": text})
+                    elif getattr(block, "type", None) == "tool_use":
+                        assistant_blocks.append(
+                            {
+                                "type": "tool_use",
+                                "id": block.id,
+                                "name": block.name,
+                                "input": block.input,
+                            }
+                        )
+                        result = self.tools.execute(block.name, block.input)
+                        tool_result_blocks.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": result,
+                                "is_error": result.startswith("Tool ")
+                                or result.startswith("Unknown tool"),
+                            }
+                        )
+
+                if assistant_blocks:
+                    self.sessions.append_message(
+                        session_key,
+                        "assistant",
+                        assistant_blocks,
+                        session_id=session_id,
+                    )
+                    messages.append({"role": "assistant", "content": assistant_blocks})
+
+                if response.stop_reason != "tool_use":
+                    break
+
+                if tool_result_blocks:
+                    self.sessions.append_message(
+                        session_key,
+                        "user",
+                        tool_result_blocks,
+                        session_id=session_id,
+                    )
+                    messages.append({"role": "user", "content": tool_result_blocks})
+            else:
+                final_text += (
+                    f"\n\n[已达到 max_turns={self.config.max_turns} 上限,任务被截断。"
+                    f"再发一条消息可让我继续。]"
+                )
+
+            if not final_text.strip():
+                final_text = "(empty response)"
+            self._maybe_generate_title(session_key, user_text, final_text, session_id=session_id)
+            return AgentReply(
+                text=final_text.strip(),
+                session_key=session_key,
+                session_id=session_id,
                 model=self.config.model,
-                system=system_prompt,
-                messages=messages,
-                tools=self.tools.specs(),
-                max_tokens=4096,
+                compacted=compacted,
             )
-            if response.usage:
-                self.sessions.set_last_usage(session_key, response.usage)
-            assistant_blocks: list[dict[str, Any]] = []
-            tool_result_blocks: list[dict[str, Any]] = []
-            for block in response.content:
-                if getattr(block, "type", None) == "text":
-                    text = getattr(block, "text", "")
-                    if text:
-                        final_text += text
-                        assistant_blocks.append({"type": "text", "text": text})
-                elif getattr(block, "type", None) == "tool_use":
-                    assistant_blocks.append(
-                        {
-                            "type": "tool_use",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        }
-                    )
-                    result = self.tools.execute(block.name, block.input)
-                    tool_result_blocks.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result,
-                            "is_error": result.startswith("Tool ")
-                            or result.startswith("Unknown tool"),
-                        }
-                    )
-
-            if assistant_blocks:
-                self.sessions.append_message(session_key, "assistant", assistant_blocks)
-                messages.append({"role": "assistant", "content": assistant_blocks})
-
-            if response.stop_reason != "tool_use":
-                break
-
-            if tool_result_blocks:
-                self.sessions.append_message(session_key, "user", tool_result_blocks)
-                messages.append({"role": "user", "content": tool_result_blocks})
-        else:
-            final_text += (
-                f"\n\n[已达到 max_turns={self.config.max_turns} 上限,任务被截断。"
-                f"再发一条消息可让我继续。]"
-            )
-
-        if not final_text.strip():
-            final_text = "(empty response)"
-        self._maybe_generate_title(session_key, user_text, final_text)
-        return AgentReply(
-            text=final_text.strip(),
-            session_key=session_key,
-            session_id=session_id,
-            model=self.config.model,
-            compacted=compacted,
-        )
+        finally:
+            self._session_local.session_key = previous_session_key
+            self._session_local.session_id = previous_session_id

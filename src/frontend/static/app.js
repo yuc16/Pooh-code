@@ -8,6 +8,7 @@ const els = {
   input: $("#input"),
   composer: $("#composer"),
   btnSend: $("#btn-send"),
+  btnStop: $("#btn-stop"),
   btnNew: $("#btn-new"),
   btnRefresh: $("#btn-refresh"),
   sidebarResizer: $("#sidebar-resizer"),
@@ -26,9 +27,9 @@ const els = {
 const scrollBtn = document.getElementById("scroll-btn");
 
 let state = {
-  busy: false,
   sessionId: null,
   sessionKey: null,
+  runningSessions: new Set(),
 };
 
 const SIDEBAR_WIDTH_KEY = "pooh.sidebar.width";
@@ -64,12 +65,40 @@ function setStatus(kind, text) {
   els.statusText.textContent = text;
 }
 
-function setBusy(busy) {
-  state.busy = busy;
-  els.btnSend.disabled = busy;
-  els.input.disabled = busy;
-  if (busy) setStatus("busy", "思考中…");
-  else setStatus("ok", "就绪");
+function setBusy(busy, sessionId = state.sessionId) {
+  if (!sessionId) {
+    els.btnSend.disabled = false;
+    els.btnStop.disabled = true;
+    els.input.disabled = false;
+    setStatus("ok", "就绪");
+    return;
+  }
+  if (busy) state.runningSessions.add(sessionId);
+  else state.runningSessions.delete(sessionId);
+  updateRunningUI();
+}
+
+function setSessionRunning(sessionId, running) {
+  if (!sessionId) return;
+  if (running) state.runningSessions.add(sessionId);
+  else state.runningSessions.delete(sessionId);
+  updateRunningUI();
+}
+
+function updateRunningUI() {
+  const currentBusy = !!(state.sessionId && state.runningSessions.has(state.sessionId));
+  els.btnSend.disabled = currentBusy;
+  els.btnStop.disabled = !currentBusy;
+  els.input.disabled = currentBusy;
+  if (currentBusy) {
+    setStatus("busy", "当前会话运行中…");
+    return;
+  }
+  if (state.runningSessions.size > 0) {
+    setStatus("busy", `后台运行 ${state.runningSessions.size} 个会话`);
+    return;
+  }
+  setStatus("ok", "就绪");
 }
 
 function applyState(payload) {
@@ -77,6 +106,9 @@ function applyState(payload) {
   if (payload.session_id) {
     state.sessionId = payload.session_id;
     els.sessionId.textContent = payload.session_id;
+  }
+  if (typeof payload.running === "boolean" && payload.session_id) {
+    setSessionRunning(payload.session_id, payload.running);
   }
   if (payload.session_key) state.sessionKey = payload.session_key;
   if (payload.model) {
@@ -87,6 +119,7 @@ function applyState(payload) {
     els.usageLabel.textContent = payload.usage.display || "—";
     els.contextPill.textContent = payload.usage.display || "--/--";
   }
+  updateRunningUI();
 }
 
 function escapeHtml(s) {
@@ -209,7 +242,8 @@ function buildToolGroupHTML(tools) {
 
 async function refreshMessages() {
   try {
-    const data = await api("/api/messages");
+    const query = state.sessionId ? `?session_id=${encodeURIComponent(state.sessionId)}` : "";
+    const data = await api(`/api/messages${query}`);
     applyState(data);
     clearMessages();
     if (!data.messages || data.messages.length === 0) {
@@ -275,12 +309,13 @@ async function refreshSessions() {
 
       const label = item.label || item.session_id;
       const row = document.createElement("div");
-      row.className = "session-item" + (item.active ? " active" : "");
+      row.className = "session-item" + (item.session_id === state.sessionId ? " active" : "");
       row.innerHTML =
         `<div class="session-item-main">` +
         `<span class="session-item-label">${escapeHtml(label)}</span>` +
         `<span class="session-item-id">${escapeHtml(item.session_id)}</span>` +
         `</div>` +
+        `${item.running ? '<span class="session-item-run">运行中</span>' : ""}` +
         `<button class="session-item-del" title="删除会话">✕</button>`;
       row.querySelector(".session-item-main").addEventListener("click", () => switchSession(item.session_id));
       row.querySelector(".session-item-del").addEventListener("click", (e) => {
@@ -627,13 +662,14 @@ async function refreshFiles() {
 }
 
 async function streamChat(text) {
+  const launchedSessionId = state.sessionId;
   const bubble = createAssistantBubble();
   ensureCursor(bubble);
 
   const resp = await fetch("/api/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, session_id: launchedSessionId }),
   });
   if (!resp.ok || !resp.body) {
     throw new Error(`HTTP ${resp.status}`);
@@ -680,15 +716,26 @@ async function streamChat(text) {
         }
         break;
       case "compacted":
-        appendMessage("system", `[autocompact -> ${evt.display || ""}]`);
+        if (state.sessionId === launchedSessionId) {
+          appendMessage("system", `[autocompact -> ${evt.display || ""}]`);
+        }
         break;
       case "truncated":
-        appendMessage(
-          "system",
-          `⚠️ 已达到 max_turns=${evt.max_turns} 上限,任务被截断。再发一条消息可让我继续。`,
-        );
+        if (state.sessionId === launchedSessionId) {
+          appendMessage(
+            "system",
+            `⚠️ 已达到 max_turns=${evt.max_turns} 上限,任务被截断。再发一条消息可让我继续。`,
+          );
+        }
+        break;
+      case "cancelled":
+        setSessionRunning(launchedSessionId, false);
+        if (state.sessionId === launchedSessionId) {
+          appendMessage("system", "当前会话已请求取消。");
+        }
         break;
       case "done":
+        setSessionRunning(launchedSessionId, false);
         removeCursor(bubble);
         finalizeToolGroup(bubble);
         // 把每段原始文本用 markdown 渲染替换
@@ -714,7 +761,7 @@ async function streamChat(text) {
           }
           bubble.body.appendChild(dlContainer);
         }
-        if (evt.session_id) {
+        if (evt.session_id && state.sessionId === launchedSessionId) {
           state.sessionId = evt.session_id;
           els.sessionId.textContent = evt.session_id;
         }
@@ -724,9 +771,12 @@ async function streamChat(text) {
         applyState(evt);
         break;
       case "error":
+        setSessionRunning(launchedSessionId, false);
         removeCursor(bubble);
-        appendMessage("system", `请求失败: ${evt.error || "unknown"}`);
-        setStatus("err", evt.error || "error");
+        if (state.sessionId === launchedSessionId) {
+          appendMessage("system", `请求失败: ${evt.error || "unknown"}`);
+          setStatus("err", evt.error || "error");
+        }
         break;
     }
   };
@@ -770,13 +820,19 @@ async function streamChat(text) {
 }
 
 async function sendMessage(text) {
-  if (!text.trim() || state.busy) return;
+  if (!text.trim()) return;
+  const launchedSessionId = state.sessionId;
+  if (launchedSessionId && state.runningSessions.has(launchedSessionId)) return;
 
   // Slash commands: run through /api/command and surface the output.
   if (text.startsWith("/")) {
-    setBusy(true);
+    setBusy(true, launchedSessionId);
     try {
-      const data = await api("/api/command", { method: "POST", body: { text } });
+      const data = await api("/api/command", {
+        method: "POST",
+        body: { text, session_id: launchedSessionId },
+      });
+      data.session_id = data.session_id || launchedSessionId;
       applyState(data);
       // /clear /new /switch 会改写 transcript，先刷新历史避免重复。
       await refreshMessages();
@@ -789,14 +845,14 @@ async function sendMessage(text) {
       appendMessage("system", `命令错误: ${err.message}`);
       setStatus("err", err.message);
     } finally {
-      setBusy(false);
+      setBusy(false, launchedSessionId);
     }
     return;
   }
 
   appendMessage("user", text);
   rebuildChatNav();
-  setBusy(true);
+  setSessionRunning(launchedSessionId, true);
   try {
     await streamChat(text);
     await Promise.all([refreshSessions(), refreshFiles()]);
@@ -804,7 +860,7 @@ async function sendMessage(text) {
     appendMessage("system", `请求失败: ${err.message}`);
     setStatus("err", err.message);
   } finally {
-    setBusy(false);
+    setSessionRunning(launchedSessionId, false);
   }
 }
 
@@ -823,7 +879,7 @@ async function switchSession(prefix) {
   try {
     const data = await api("/api/session/switch", {
       method: "POST",
-      body: { session_id_prefix: prefix },
+      body: { session_id_prefix: prefix, session_id: state.sessionId },
     });
     applyState(data);
     await Promise.all([refreshMessages(), refreshSessions(), refreshFiles()]);
@@ -904,6 +960,20 @@ els.btnRefresh.addEventListener("click", () => {
   refreshMessages();
   refreshSessions();
   refreshFiles();
+});
+
+els.btnStop.addEventListener("click", async () => {
+  if (!state.sessionId || !state.runningSessions.has(state.sessionId)) return;
+  try {
+    const data = await api("/api/session/cancel", {
+      method: "POST",
+      body: { session_id: state.sessionId },
+    });
+    applyState(data);
+    appendMessage("system", "已发送取消请求。");
+  } catch (err) {
+    setStatus("err", `取消失败: ${err.message}`);
+  }
 });
 
 els.sidebarResizer.addEventListener("pointerdown", (e) => {
