@@ -490,6 +490,14 @@ def _convert_user_content(content: Any) -> list[dict[str, Any]]:
         part_type = part.get("type")
         if part_type == "text":
             text_parts.append({"type": "input_text", "text": str(part.get("text", ""))})
+        elif part_type == "image":
+            # 多模态图片块 → Codex input_image
+            media_type = part.get("media_type", "image/png")
+            data = part.get("data", "")
+            text_parts.append({
+                "type": "input_image",
+                "image_url": f"data:{media_type};base64,{data}",
+            })
         elif part_type == "tool_result":
             call_id, _ = _split_tool_call_id(part.get("tool_use_id"))
             items.append(

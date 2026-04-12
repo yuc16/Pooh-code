@@ -14,5 +14,6 @@ workplace/runtime/sessions/
 workplace/runtime/config/settings.json
 # agent 产出专区,有独立的 git 仓库推到 temp 分支,不要被主仓库跟踪
 workplace/output/
+workplace/uploads/
 .DS_Store
 .env

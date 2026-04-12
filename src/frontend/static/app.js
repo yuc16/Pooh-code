@@ -12,6 +12,9 @@ const els = {
   btnNew: $("#btn-new"),
   btnRefresh: $("#btn-refresh"),
   sidebarResizer: $("#sidebar-resizer"),
+  btnAttach: $("#btn-attach"),
+  fileInput: $("#file-input"),
+  filePreviewBar: $("#file-preview-bar"),
   sessionList: $("#session-list"),
   fileGroups: $("#file-groups"),
   filesSummary: $("#files-summary"),
@@ -30,6 +33,7 @@ let state = {
   sessionId: null,
   sessionKey: null,
   runningSessions: new Set(),
+  pendingFiles: [], // [{file: File, serverPath: string, name: string}]
 };
 
 const SIDEBAR_WIDTH_KEY = "pooh.sidebar.width";
@@ -661,15 +665,17 @@ async function refreshFiles() {
   }
 }
 
-async function streamChat(text) {
+async function streamChat(text, files = []) {
   const launchedSessionId = state.sessionId;
   const bubble = createAssistantBubble();
   ensureCursor(bubble);
 
+  const payload = { text, session_id: launchedSessionId };
+  if (files && files.length) payload.files = files;
   const resp = await fetch("/api/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, session_id: launchedSessionId }),
+    body: JSON.stringify(payload),
   });
   if (!resp.ok || !resp.body) {
     throw new Error(`HTTP ${resp.status}`);
@@ -820,9 +826,15 @@ async function streamChat(text) {
 }
 
 async function sendMessage(text) {
-  if (!text.trim()) return;
+  if (!text.trim() && !state.pendingFiles.length) return;
   const launchedSessionId = state.sessionId;
   if (launchedSessionId && state.runningSessions.has(launchedSessionId)) return;
+
+  // 收集附件路径并清空
+  const filePaths = state.pendingFiles.map((f) => f.serverPath);
+  const fileNames = state.pendingFiles.map((f) => f.name);
+  state.pendingFiles = [];
+  renderFilePreview();
 
   // Slash commands: run through /api/command and surface the output.
   if (text.startsWith("/")) {
@@ -850,11 +862,14 @@ async function sendMessage(text) {
     return;
   }
 
-  appendMessage("user", text);
+  const displayText = fileNames.length
+    ? text + "\n" + fileNames.map((n) => `[${_fileIcon(n)} ${n}]`).join(" ")
+    : text;
+  appendMessage("user", displayText);
   rebuildChatNav();
   setSessionRunning(launchedSessionId, true);
   try {
-    await streamChat(text);
+    await streamChat(text, filePaths);
     await Promise.all([refreshSessions(), refreshFiles()]);
   } catch (err) {
     appendMessage("system", `请求失败: ${err.message}`);
@@ -932,6 +947,104 @@ function updateChatNavActive() {
 }
 
 els.messages.addEventListener("scroll", updateChatNavActive);
+
+// ---------- file upload ----------
+function renderFilePreview() {
+  els.filePreviewBar.innerHTML = "";
+  for (let i = 0; i < state.pendingFiles.length; i++) {
+    const f = state.pendingFiles[i];
+    const item = document.createElement("div");
+    item.className = "file-preview-item";
+
+    const isImage = f.file.type.startsWith("image/");
+    if (isImage) {
+      const thumb = document.createElement("img");
+      thumb.className = "fp-thumb";
+      thumb.src = URL.createObjectURL(f.file);
+      item.appendChild(thumb);
+    } else {
+      const icon = document.createElement("span");
+      icon.className = "fp-icon";
+      icon.textContent = _fileIcon(f.name);
+      item.appendChild(icon);
+    }
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "fp-name";
+    nameEl.textContent = f.name;
+    item.appendChild(nameEl);
+
+    const sizeEl = document.createElement("span");
+    sizeEl.className = "fp-size";
+    sizeEl.textContent = _humanSize(f.file.size);
+    item.appendChild(sizeEl);
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "fp-remove";
+    removeBtn.textContent = "\u00d7";
+    removeBtn.addEventListener("click", () => {
+      state.pendingFiles.splice(i, 1);
+      renderFilePreview();
+    });
+    item.appendChild(removeBtn);
+
+    els.filePreviewBar.appendChild(item);
+  }
+}
+
+async function uploadFiles(files) {
+  if (!files || !files.length) return [];
+  const formData = new FormData();
+  for (const f of files) {
+    formData.append("files", f, f.name);
+  }
+  const resp = await fetch("/api/upload", { method: "POST", body: formData });
+  const data = await resp.json();
+  if (!data.ok) throw new Error(data.error || "upload failed");
+  return data.files; // [{path, name, size}]
+}
+
+async function addFiles(fileList) {
+  if (!fileList || !fileList.length) return;
+  // 先上传到服务器
+  try {
+    const saved = await uploadFiles(fileList);
+    for (let i = 0; i < saved.length; i++) {
+      state.pendingFiles.push({
+        file: fileList[i],
+        serverPath: saved[i].path,
+        name: saved[i].name,
+      });
+    }
+    renderFilePreview();
+  } catch (err) {
+    appendMessage("system", `文件上传失败: ${err.message}`);
+  }
+}
+
+els.btnAttach.addEventListener("click", () => els.fileInput.click());
+els.fileInput.addEventListener("change", () => {
+  if (els.fileInput.files.length) {
+    addFiles(Array.from(els.fileInput.files));
+    els.fileInput.value = "";
+  }
+});
+
+// 拖放支持
+els.composer.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  els.composer.classList.add("drag-over");
+});
+els.composer.addEventListener("dragleave", () => {
+  els.composer.classList.remove("drag-over");
+});
+els.composer.addEventListener("drop", (e) => {
+  e.preventDefault();
+  els.composer.classList.remove("drag-over");
+  if (e.dataTransfer.files.length) {
+    addFiles(Array.from(e.dataTransfer.files));
+  }
+});
 
 // ---------- events ----------
 els.composer.addEventListener("submit", (e) => {

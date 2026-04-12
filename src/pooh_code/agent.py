@@ -9,6 +9,7 @@ from .config import AgentConfig
 from .context import ContextManager, ContextUsage
 from .models import AgentReply, ToolSpec, ToolSpec
 from .openai_codex import PoohCodexClient
+from .file_processing import process_file
 from .output_files import OUTPUT_DIR, ensure_session_output_dir
 from .paths import BOOTSTRAP_FILES, PROJECT_ROOT, RUNTIME_DIR, ensure_runtime_dirs
 from .session_store import SessionStore
@@ -303,6 +304,7 @@ class PoohAgent:
         *,
         session_id: str | None = None,
         cancel_event: threading.Event | None = None,
+        files: list[str] | None = None,
     ) -> AgentReply:
         """Streaming variant of `ask`.
 
@@ -333,7 +335,22 @@ class PoohAgent:
             self.context.context_window = self.config.context_window
             ensure_session_output_dir(actual_session_id)
 
-            self.sessions.append_message(session_key, "user", user_text, session_id=actual_session_id)
+            # 构建用户消息内容：纯文本或多模态（文本+图片+文档摘要）
+            user_content: Any = user_text
+            if files:
+                from pathlib import Path
+                content_blocks: list[dict[str, Any]] = []
+                if user_text:
+                    content_blocks.append({"type": "text", "text": user_text})
+                for fpath in files:
+                    try:
+                        blocks = process_file(Path(fpath))
+                        content_blocks.extend(blocks)
+                    except Exception as exc:
+                        content_blocks.append({"type": "text", "text": f"[文件处理失败: {Path(fpath).name} - {exc}]"})
+                user_content = content_blocks if content_blocks else user_text
+
+            self.sessions.append_message(session_key, "user", user_content, session_id=actual_session_id)
 
             compacted = self.compact_session(
                 session_key,

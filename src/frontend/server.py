@@ -15,10 +15,12 @@ import argparse
 import concurrent.futures
 import json
 import mimetypes
+import re
 import sys
 import threading
 import time
 import traceback
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -42,6 +44,7 @@ from pooh_code.output_files import (  # noqa: E402
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "workplace" / "uploads"
 WEB_CHANNEL = "web"
 WEB_ACCOUNT = "local"
 WEB_PEER = "web-user"
@@ -87,6 +90,40 @@ def _content_disposition_attachment(filename: str) -> str:
     escaped_ascii_name = ascii_name.replace("\\", "\\\\").replace('"', '\\"')
     encoded_name = quote(filename, safe="")
     return f"attachment; filename=\"{escaped_ascii_name}\"; filename*=UTF-8''{encoded_name}"
+
+
+def _parse_multipart(content_type: str, body: bytes) -> list[dict[str, Any]]:
+    """解析 multipart/form-data，返回 [{name, filename, data, content_type}]。"""
+    m = re.search(r"boundary=([^\s;]+)", content_type)
+    if not m:
+        return []
+    boundary = m.group(1).encode("ascii")
+    parts = body.split(b"--" + boundary)
+    result: list[dict[str, Any]] = []
+    for part in parts:
+        part = part.strip()
+        if not part or part == b"--":
+            continue
+        if b"\r\n\r\n" in part:
+            header_block, data = part.split(b"\r\n\r\n", 1)
+        elif b"\n\n" in part:
+            header_block, data = part.split(b"\n\n", 1)
+        else:
+            continue
+        # 去掉结尾的 \r\n
+        if data.endswith(b"\r\n"):
+            data = data[:-2]
+        headers_str = header_block.decode("utf-8", errors="replace")
+        name_match = re.search(r'name="([^"]*)"', headers_str)
+        filename_match = re.search(r'filename="([^"]*)"', headers_str)
+        ct_match = re.search(r"Content-Type:\s*(.+)", headers_str, re.IGNORECASE)
+        result.append({
+            "name": name_match.group(1) if name_match else "",
+            "filename": filename_match.group(1) if filename_match else None,
+            "data": data,
+            "content_type": ct_match.group(1).strip() if ct_match else "application/octet-stream",
+        })
+    return result
 
 
 def _extract_text_only(content: Any) -> str:
@@ -257,6 +294,8 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         try:
             parsed = urlparse(self.path)
             path = parsed.path
+            if path == "/api/upload":
+                return self._handle_upload()
             if path == "/api/chat":
                 return self._handle_chat()
             if path == "/api/chat/stream":
@@ -347,6 +386,43 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
             item["running"] = self.server.runs.is_running(item["session_id"])
         self._send_json({"ok": True, "sessions": items, **self._state_payload()})
 
+    def _handle_upload(self) -> None:
+        """处理文件上传，保存到 workplace/uploads/ 并返回文件路径列表。"""
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            self._send_error_json(400, "Content-Type must be multipart/form-data")
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        if not length:
+            self._send_error_json(400, "empty body")
+            return
+        if length > 100 * 1024 * 1024:  # 100MB 限制
+            self._send_error_json(413, "file too large (max 100MB)")
+            return
+        body = self.rfile.read(length)
+        parts = _parse_multipart(content_type, body)
+        if not parts:
+            self._send_error_json(400, "no files found in request")
+            return
+
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        saved: list[dict[str, str]] = []
+        for part in parts:
+            if not part.get("filename"):
+                continue
+            # 用 UUID 前缀防止文件名冲突
+            safe_name = Path(part["filename"]).name
+            unique_name = f"{uuid.uuid4().hex[:8]}_{safe_name}"
+            dest = UPLOAD_DIR / unique_name
+            dest.write_bytes(part["data"])
+            saved.append({
+                "path": str(dest),
+                "name": safe_name,
+                "size": len(part["data"]),
+            })
+
+        self._send_json({"ok": True, "files": saved})
+
     def _handle_chat(self) -> None:
         body = self._read_json_body()
         text = str(body.get("text", "")).strip()
@@ -377,8 +453,9 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
     def _handle_chat_stream(self) -> None:
         body = self._read_json_body()
         text = str(body.get("text", "")).strip()
-        if not text:
-            raise ValueError("text is required")
+        files = body.get("files") or []  # list of file path strings
+        if not text and not files:
+            raise ValueError("text or files is required")
         agent = self.server.agent
         session_key = self._session_key()
         session_id = self._session_id_from_body(body, session_key)
@@ -420,6 +497,7 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 on_event,
                 session_id=session_id,
                 cancel_event=run.cancel_event,
+                files=files or None,
             )
             _write_sse("state", self._state_payload(session_id))
         except concurrent.futures.CancelledError:
