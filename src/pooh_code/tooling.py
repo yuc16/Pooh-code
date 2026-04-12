@@ -52,7 +52,9 @@ def _safe_workplace_path(raw: str) -> Path:
     """把相对/绝对路径约束在 workplace 沙箱内，越界抛错。"""
     base = WORKPLACE_DIR.resolve()
     normalized = raw.strip()
-    if normalized.startswith("workplace/"):
+    if normalized == "workplace" or normalized == "workplace/":
+        normalized = "."
+    elif normalized.startswith("workplace/"):
         normalized = normalized[len("workplace/") :]
     target = Path(normalized) if os.path.isabs(normalized) else base / normalized
     target = target.resolve()

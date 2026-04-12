@@ -40,6 +40,64 @@ const SIDEBAR_WIDTH_KEY = "pooh.sidebar.width";
 const SIDEBAR_MIN = 220;
 const SIDEBAR_MAX = 520;
 
+function enableDragScroll(container) {
+  if (!container) return;
+  let pointerId = null;
+  let startY = 0;
+  let startScrollTop = 0;
+  let dragging = false;
+  let moved = false;
+  let suppressClick = false;
+
+  container.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest("button, input, textarea, select, label")) return;
+    e.preventDefault();
+    pointerId = e.pointerId;
+    startY = e.clientY;
+    startScrollTop = container.scrollTop;
+    dragging = true;
+    moved = false;
+    container.classList.add("dragging-scroll");
+    container.setPointerCapture(pointerId);
+  });
+
+  container.addEventListener("pointermove", (e) => {
+    if (!dragging || e.pointerId !== pointerId) return;
+    e.preventDefault();
+    const deltaY = e.clientY - startY;
+    if (Math.abs(deltaY) > 4) moved = true;
+    container.scrollTop = startScrollTop - deltaY;
+  });
+
+  const stopDragging = (e) => {
+    if (!dragging || e.pointerId !== pointerId) return;
+    if (container.hasPointerCapture(pointerId)) {
+      container.releasePointerCapture(pointerId);
+    }
+    suppressClick = moved;
+    pointerId = null;
+    dragging = false;
+    container.classList.remove("dragging-scroll");
+    if (moved) {
+      e.preventDefault();
+    }
+  };
+
+  container.addEventListener("pointerup", stopDragging);
+  container.addEventListener("pointercancel", stopDragging);
+  container.addEventListener(
+    "click",
+    (e) => {
+      if (!suppressClick) return;
+      e.preventDefault();
+      e.stopPropagation();
+      suppressClick = false;
+    },
+    true
+  );
+}
+
 function applySidebarWidth(width) {
   const clamped = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Math.round(width)));
   document.documentElement.style.setProperty("--sidebar-width", `${clamped}px`);
@@ -694,6 +752,7 @@ function renderFileGroups(groups) {
       row.className = "file-row downloadable";
       row.href = `/api/download?path=${encodeURIComponent(file.path)}`;
       row.target = "_blank";
+      row.draggable = false;
       row.innerHTML =
         `<span class="file-row-icon">${_fileIcon(file.name)}</span>` +
         `<span class="file-row-main">` +

@@ -17,3 +17,4 @@ workplace/output/
 workplace/uploads/
 .DS_Store
 .env
+workplace/runtime/skills/byd-patent-claim-chart-internal/secrets.local.json
