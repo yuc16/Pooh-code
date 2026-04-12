@@ -8,8 +8,8 @@ description: 生成或编辑 Word 文档（.docx 文件）。当用户提到"Wor
 ## 核心流程
 
 1. 检查是否有相关依赖，如果没有，那么安装依赖
-2. 编写 Python 脚本生成 .docx
-3. 运行脚本，输出到 `workplace/output/`
+2. 用 `write_file(path="scripts/...")` 编写 Python 脚本生成 .docx
+3. 用 `bash` 在 `cwd=workplace` 下运行脚本，输出到 `output/`
 4. 告知用户文件已生成
 
 ## 环境准备
@@ -22,10 +22,10 @@ uv add python-docx
 
 ## 输出路径
 
-所有生成的文件**必须**写入 `workplace/output/` 目录。例如：
+所有生成的文件**必须**写入当前会话目录 `output/<session_id>/`（对应项目里的 `workplace/output/<session_id>/`）。`session_id` 从 Runtime 里的 `current_session_id` 读取。例如：
 
 ```python
-output_path = "workplace/output/报告.docx"
+output_path = f"output/{session_id}/报告.docx"
 ```
 
 ## 快速参考
@@ -86,7 +86,7 @@ for cell in table.columns[0].cells:
     cell.width = Cm(4)
 
 # 图片（如有本地图片）
-# doc.add_picture('workplace/output/image.png', width=Inches(4))
+# doc.add_picture(f'output/{session_id}/image.png', width=Inches(4))
 
 # 分页
 doc.add_page_break()
@@ -98,7 +98,7 @@ footer = section.footer
 footer.paragraphs[0].text = '页脚文本'
 
 # 保存
-doc.save('workplace/output/文档.docx')
+doc.save(f'output/{session_id}/文档.docx')
 ```
 
 ## 中文字体处理
@@ -167,8 +167,9 @@ cell._tc.get_or_add_tcPr().append(shading)
 
 ## 重要提醒
 
-- **所有文件输出到 `workplace/output/`**，不要写到其他位置
-- 用 `write_file` 写 Python 脚本，用 `bash` 执行它，python解释器在/Users/wangyc/Desktop/projects/Pooh-code/.venv/bin/python
-- 脚本路径可以是 `workplace/scripts/gen_docx.py`（临时），生成物放 `workplace/output/`
+- **当前会话的所有 agent 文件都放到 `output/<session_id>/`**
+- `session_id` 从 Runtime 里的 `current_session_id` 读取；当前目录也会在 Runtime 的 `session_output_dir_relative_to_workplace` 给出
+- 用 `write_file(path=f"output/{session_id}/gen_docx.py")` 写 Python 脚本，用 `bash` 在 `cwd=workplace` 下执行它，python解释器在/Users/wangyc/Desktop/projects/Pooh-code/.venv/bin/python
+- 最终 `.docx` 也写到同一个 `output/<session_id>/` 目录；不要写到其他会话目录
 - 生成完毕后告知用户文件名和路径，前端会自动显示下载按钮
 - 对于复杂文档，先在脚本中组织好内容结构再一次性生成，避免反复修改

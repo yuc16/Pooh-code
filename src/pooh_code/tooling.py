@@ -51,7 +51,10 @@ def _truncate(text: str, limit: int = MAX_TOOL_OUTPUT) -> str:
 def _safe_workplace_path(raw: str) -> Path:
     """把相对/绝对路径约束在 workplace 沙箱内，越界抛错。"""
     base = WORKPLACE_DIR.resolve()
-    target = Path(raw) if os.path.isabs(raw) else base / raw
+    normalized = raw.strip()
+    if normalized.startswith("workplace/"):
+        normalized = normalized[len("workplace/") :]
+    target = Path(normalized) if os.path.isabs(normalized) else base / normalized
     target = target.resolve()
     try:
         target.relative_to(base)

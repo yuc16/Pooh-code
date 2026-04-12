@@ -146,8 +146,9 @@ function buildToolGroupHTML(tools) {
     const resultLabel = t.is_error ? "ERROR" : "OUTPUT";
     // 检测文件下载
     if (!t.is_error && t.result) {
-      const outputPath = _extractOutputPath(t.name, t.result);
-      if (outputPath) downloadPaths.push(outputPath);
+      for (const outputPath of _extractOutputPaths(t.name, t.result)) {
+        downloadPaths.push(outputPath);
+      }
     }
     return `<div class="tool-block${errClass}">
       <div class="tool-head">
@@ -457,8 +458,7 @@ function attachToolResult(bubble, { tool_use_id, name, content, is_error }) {
 
   // 检测是否在 output/ 下生成了文件，自动添加下载按钮
   if (!is_error && content) {
-    const outputPath = _extractOutputPath(name, content);
-    if (outputPath) {
+    for (const outputPath of _extractOutputPaths(name, content)) {
       const dlBtn = createDownloadButton(outputPath);
       // 追加到气泡主体（不在折叠的 tool group 里），让用户更容易看到
       if (!bubble._pendingDownloads) bubble._pendingDownloads = [];
@@ -496,20 +496,17 @@ function _humanSize(bytes) {
 }
 
 /**
- * 从 write_file 工具结果中提取 output/ 下的文件路径，返回相对于 output/ 的路径。
- * 例如 "wrote 1234 chars to /abs/path/workplace/output/report.docx" → "report.docx"
+ * 从工具结果中提取 output/ 下的 Office 交付文件路径。
  */
-function _extractOutputPath(toolName, resultText) {
-  if (toolName !== "write_file" && toolName !== "bash") return null;
-  // write_file 的结果格式: "wrote N chars to <path>"
-  const writeMatch = resultText.match(/wrote \d+ chars to .*?workplace\/output\/(.+)/);
-  if (writeMatch) return writeMatch[1];
-  // bash 结果里可能也有 workplace/output/ 文件生成的痕迹
-  if (toolName === "bash") {
-    const bashMatch = resultText.match(/workplace\/output\/([^\s"']+\.\w{2,5})/);
-    if (bashMatch) return bashMatch[1];
+function _extractOutputPaths(toolName, resultText) {
+  if (toolName !== "write_file" && toolName !== "bash") return [];
+  const matches = resultText.match(/workplace\/output\/([^\s"'`]+\.(?:docx|xlsx|pptx))/gi) || [];
+  const outputPaths = [];
+  for (const match of matches) {
+    const relPath = match.replace(/^.*?workplace\/output\//i, "");
+    if (!outputPaths.includes(relPath)) outputPaths.push(relPath);
   }
-  return null;
+  return outputPaths;
 }
 
 function createDownloadButton(relPath) {

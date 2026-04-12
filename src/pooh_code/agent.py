@@ -9,6 +9,7 @@ from .config import AgentConfig
 from .context import ContextManager, ContextUsage
 from .models import AgentReply, ToolSpec, ToolSpec
 from .openai_codex import PoohCodexClient
+from .output_files import OUTPUT_DIR, ensure_session_output_dir
 from .paths import BOOTSTRAP_FILES, PROJECT_ROOT, RUNTIME_DIR, ensure_runtime_dirs
 from .session_store import SessionStore
 from .skills import SkillsManager
@@ -54,6 +55,14 @@ class PoohAgent:
         )
         self._register_skill_tool()
 
+    def _current_session_context(self) -> tuple[str | None, str | None]:
+        session_key = getattr(self._session_local, "session_key", None)
+        if not session_key:
+            return None, None
+        session_id = self.sessions.get_session_id(session_key)
+        output_dir = str(ensure_session_output_dir(session_id))
+        return session_key, output_dir
+
     def _register_skill_tool(self) -> None:
         self.skills.discover()
         available = self.skills.list_names()
@@ -97,6 +106,8 @@ class PoohAgent:
 
     def build_system_prompt(self, user_text: str) -> str:
         parts = [self._load_bootstrap_files(), self.skills.render_metadata_for_prompt()]
+        session_key, session_output_dir = self._current_session_context()
+        session_id = self.sessions.get_session_id(session_key) if session_key else None
         runtime = {
             "agent_name": self.config.name,
             "agent_id": self.agent_id,
@@ -105,10 +116,16 @@ class PoohAgent:
             "model": self.config.model,
             "project_root": str(PROJECT_ROOT),
             "runtime_root": str(RUNTIME_DIR),
+            "output_root": str(OUTPUT_DIR),
             "cwd": os.getcwd(),
             "timezone": SHANGHAI_TZ_NAME,
             "local_time": shanghai_now_iso(),
         }
+        if session_key and session_id and session_output_dir:
+            runtime["session_key"] = session_key
+            runtime["current_session_id"] = session_id
+            runtime["session_output_dir"] = session_output_dir
+            runtime["session_output_dir_relative_to_workplace"] = f"output/{session_id}"
         parts.append("## Runtime\n" + json.dumps(runtime, ensure_ascii=False, indent=2))
         if self.extra_system_prompt.strip():
             parts.append("## Agent Policy\n" + self.extra_system_prompt.strip())
@@ -283,6 +300,7 @@ class PoohAgent:
         self._session_local.session_key = session_key
         self.context.model = self.config.model
         self.context.context_window = self.config.context_window
+        ensure_session_output_dir(self.sessions.get_session_id(session_key))
 
         self.sessions.append_message(session_key, "user", user_text)
 
@@ -413,6 +431,7 @@ class PoohAgent:
         self.context.context_window = self.config.context_window
         messages = self.sessions.load_messages(session_key)
         session_id = self.sessions.get_session_id(session_key)
+        ensure_session_output_dir(session_id)
         self.sessions.append_message(session_key, "user", user_text)
         messages.append({"role": "user", "content": user_text})
 

@@ -29,9 +29,12 @@ if str(_SRC_DIR) not in sys.path:
 from pooh_code.agent import PoohAgent  # noqa: E402
 from pooh_code.commands import CommandProcessor  # noqa: E402
 from pooh_code.config import load_settings  # noqa: E402
-from pooh_code.paths import WORKPLACE_DIR  # noqa: E402
-
-OUTPUT_DIR = WORKPLACE_DIR / "output"
+from pooh_code.output_files import (  # noqa: E402
+    DELIVERABLE_SUFFIXES,
+    OUTPUT_DIR,
+    is_deliverable_output_path,
+    iter_deliverable_files,
+)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 WEB_CHANNEL = "web"
@@ -449,17 +452,9 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
 
     def _handle_files(self) -> None:
         """列出 workplace/output/ 中的文件，支持浏览和下载。"""
-        if not OUTPUT_DIR.exists():
-            self._send_json({"ok": True, "files": []})
-            return
         files: list[dict[str, Any]] = []
-        for f in sorted(OUTPUT_DIR.rglob("*")):
-            if not f.is_file():
-                continue
-            # 跳过 .git 目录下的文件
+        for f in iter_deliverable_files():
             rel = f.relative_to(OUTPUT_DIR)
-            if any(part.startswith(".") for part in rel.parts):
-                continue
             stat = f.stat()
             files.append({
                 "path": str(rel),
@@ -468,8 +463,6 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 "modified": stat.st_mtime,
                 "suffix": f.suffix.lower(),
             })
-        # 按修改时间降序
-        files.sort(key=lambda x: x["modified"], reverse=True)
         self._send_json({"ok": True, "files": files})
 
     def _handle_download(self, parsed: Any) -> None:
@@ -487,15 +480,16 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         if not target.exists() or not target.is_file():
             self._send_error_json(404, f"not found: {rel_path}")
             return
+        if target.suffix.lower() not in DELIVERABLE_SUFFIXES or not is_deliverable_output_path(target):
+            self._send_error_json(403, f"unsupported download type: {target.suffix.lower()}")
+            return
         mime = DOWNLOAD_MIME_TYPES.get(target.suffix.lower(), "application/octet-stream")
         data = target.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(data)))
         # 对 Office 文件和二进制文件使用 attachment 触发下载
-        disposition = "attachment" if target.suffix.lower() in {
-            ".docx", ".xlsx", ".pptx", ".pdf", ".zip", ".csv", ".tsv",
-        } else "inline"
+        disposition = "attachment"
         self.send_header(
             "Content-Disposition",
             f'{disposition}; filename="{target.name}"',

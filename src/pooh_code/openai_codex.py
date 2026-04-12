@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,6 +21,7 @@ except ImportError:
 DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
 DEFAULT_ORIGINATOR = "pooh-code"
 DEFAULT_MODEL = "gpt-5.4"
+TRANSIENT_STATUS_CODES = {502, 503, 504}
 FINISH_REASON_MAP = {
     "completed": "end_turn",
     "incomplete": "max_tokens",
@@ -244,26 +246,31 @@ def _request_codex(
     verify_ssl: bool,
     on_event: Any = None,
 ) -> tuple[str, list[dict[str, Any]], str, dict[str, Any] | None]:
-    try:
-        return _request_codex_once(
-            url=url,
-            headers=headers,
-            body=body,
-            timeout_seconds=timeout_seconds,
-            verify_ssl=verify_ssl,
-            on_event=on_event,
-        )
-    except Exception as exc:
-        if "CERTIFICATE_VERIFY_FAILED" not in str(exc) or not verify_ssl:
-            raise
-        return _request_codex_once(
-            url=url,
-            headers=headers,
-            body=body,
-            timeout_seconds=timeout_seconds,
-            verify_ssl=False,
-            on_event=on_event,
-        )
+    attempts = 3
+    last_exc: Exception | None = None
+    current_verify_ssl = verify_ssl
+    for attempt in range(1, attempts + 1):
+        try:
+            return _request_codex_once(
+                url=url,
+                headers=headers,
+                body=body,
+                timeout_seconds=timeout_seconds,
+                verify_ssl=current_verify_ssl,
+                on_event=on_event,
+            )
+        except Exception as exc:
+            last_exc = exc
+            message = str(exc)
+            if "CERTIFICATE_VERIFY_FAILED" in message and current_verify_ssl:
+                current_verify_ssl = False
+                continue
+            if attempt >= attempts or not _is_transient_codex_error(exc):
+                raise
+            time.sleep(attempt)
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("OpenAI Codex request failed without a captured exception.")
 
 
 def _request_codex_once(
@@ -597,7 +604,24 @@ def _friendly_error(status_code: int, raw: str) -> str:
         return "OpenAI Codex access denied. Check that the account has ChatGPT Plus/Pro access."
     if status_code == 429:
         return "ChatGPT quota exceeded or rate limited. Try again later."
+    if status_code in TRANSIENT_STATUS_CODES:
+        return f"OpenAI Codex upstream temporarily unavailable (HTTP {status_code}). Please retry."
     return f"HTTP {status_code}: {raw}"
+
+
+def _is_transient_codex_error(exc: Exception) -> bool:
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.TransportError)):
+        return True
+    message = str(exc)
+    if any(f"HTTP {code}" in message for code in TRANSIENT_STATUS_CODES):
+        return True
+    transient_markers = (
+        "upstream connect error",
+        "connection timeout",
+        "temporarily unavailable",
+        "server disconnected without sending a response",
+    )
+    return any(marker in message.lower() for marker in transient_markers)
 
 
 def _env_bool(name: str, default: bool) -> bool:
