@@ -129,7 +129,7 @@ class PoohAgent:
             "project_root": str(PROJECT_ROOT),
             "runtime_root": str(RUNTIME_DIR),
             "output_root": str(OUTPUT_DIR),
-            "cwd": os.getcwd(),
+            "cwd": str(RUNTIME_DIR.parent),  # workplace/，bash 工具的默认工作目录
             "timezone": SHANGHAI_TZ_NAME,
             "local_time": shanghai_now_iso(),
         }

@@ -311,17 +311,30 @@ async function refreshSessions() {
         els.sessionList.appendChild(hdr);
       }
 
-      const label = item.label || item.session_id;
+      const displayLabel = item.label || item.session_id;
+      const rawLabel = item.label || "";
       const row = document.createElement("div");
       row.className = "session-item" + (item.session_id === state.sessionId ? " active" : "");
       row.innerHTML =
         `<div class="session-item-main">` +
-        `<span class="session-item-label">${escapeHtml(label)}</span>` +
+        `<span class="session-item-label">${escapeHtml(displayLabel)}</span>` +
         `<span class="session-item-id">${escapeHtml(item.session_id)}</span>` +
         `</div>` +
         `${item.running ? '<span class="session-item-run">运行中</span>' : ""}` +
         `<button class="session-item-del" title="删除会话">✕</button>`;
-      row.querySelector(".session-item-main").addEventListener("click", () => switchSession(item.session_id));
+      const mainEl = row.querySelector(".session-item-main");
+      let clickTimer = null;
+      mainEl.addEventListener("click", (e) => {
+        // 如果正在编辑则不触发切换
+        if (row.querySelector(".session-rename-input")) return;
+        if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; return; }
+        clickTimer = setTimeout(() => { clickTimer = null; switchSession(item.session_id); }, 250);
+      });
+      row.querySelector(".session-item-label").addEventListener("dblclick", (e) => {
+        e.stopPropagation();
+        if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+        startRenameSession(row, item.session_id, rawLabel);
+      });
       row.querySelector(".session-item-del").addEventListener("click", (e) => {
         e.stopPropagation();
         deleteSession(item.session_id);
@@ -330,6 +343,53 @@ async function refreshSessions() {
     }
   } catch (err) {
     setStatus("err", `加载会话失败: ${err.message}`);
+  }
+}
+
+function startRenameSession(row, sessionId, currentLabel) {
+  const labelEl = row.querySelector(".session-item-label");
+  if (!labelEl || labelEl.querySelector("input")) return;
+
+  const displayLabel = currentLabel || sessionId;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "session-rename-input";
+  input.value = currentLabel;
+  input.placeholder = sessionId;
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("dblclick", (e) => e.stopPropagation());
+
+  let cancelled = false;
+  const commit = async () => {
+    if (cancelled) { labelEl.textContent = displayLabel; return; }
+    const newLabel = input.value.trim();
+    if (newLabel !== currentLabel) {
+      await renameSession(sessionId, newLabel);
+    } else {
+      labelEl.textContent = displayLabel;
+    }
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+    if (e.key === "Escape") { cancelled = true; input.blur(); }
+  });
+  input.addEventListener("blur", commit);
+
+  labelEl.textContent = "";
+  labelEl.appendChild(input);
+  input.focus();
+  input.select();
+}
+
+async function renameSession(sessionId, label) {
+  try {
+    await api("/api/session/rename", {
+      method: "POST",
+      body: { session_id: sessionId, label },
+    });
+    await Promise.all([refreshSessions(), refreshFiles()]);
+  } catch (err) {
+    setStatus("err", `重命名失败: ${err.message}`);
   }
 }
 
@@ -614,7 +674,9 @@ function renderFileGroups(groups) {
     const header = document.createElement("button");
     header.className = "file-group-head";
     header.type = "button";
+    const groupLabel = group.label || group.session_id;
     header.innerHTML =
+      `<span class="file-group-label">${escapeHtml(groupLabel)}</span>` +
       `<span class="file-group-session">${escapeHtml(group.session_id)}</span>` +
       `<span class="file-group-count">${group.file_count || 0} 文件</span>`;
     wrap.appendChild(header);

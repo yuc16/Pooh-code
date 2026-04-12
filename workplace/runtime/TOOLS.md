@@ -11,7 +11,8 @@
 - `web_search_and_read`：联网搜索并自动抓取 top 结果的完整正文，适合需要深入了解的场景
 
 规则：
-- 文件系统操作限制在当前项目根目录内
+- **所有文件系统操作的根目录和 cwd 是 `workplace/`（不是项目根目录）**。bash 的默认 cwd 是 `workplace/`，所以路径应使用 `runtime/...`、`output/...` 而非 `workplace/runtime/...`、`workplace/output/...`
+- `read_file`、`write_file`、`edit_file`、`glob`、`grep` 等工具的路径同理，都相对于 `workplace/`
 - 内容搜索优先使用 `rg`
 - 保持工具输出简洁
 - 联网搜索：简单问题用 `web_search`，需要详细内容时用 `web_search_and_read`

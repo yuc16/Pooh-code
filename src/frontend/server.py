@@ -312,6 +312,8 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 return self._handle_delete_session()
             if path == "/api/session/cancel":
                 return self._handle_cancel_session()
+            if path == "/api/session/rename":
+                return self._handle_rename_session()
             if path == "/api/session/compact":
                 return self._handle_compact_session()
             self._send_error_json(404, f"not found: {path}")
@@ -603,6 +605,16 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
     def _handle_files(self) -> None:
         """列出 workplace/output/ 中的文件，支持浏览和下载。"""
         groups = group_output_files_by_session()
+        # 为每个 group 补上 session label
+        session_key = self._session_key()
+        session_labels = {}
+        try:
+            for item in self.server.agent.sessions.list_sessions(session_key=session_key):
+                session_labels[item["session_id"]] = item.get("label", "")
+        except Exception:
+            pass
+        for group in groups:
+            group["label"] = session_labels.get(group["session_id"], "")
         self._send_json(
             {
                 "ok": True,
@@ -652,6 +664,17 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
+
+    def _handle_rename_session(self) -> None:
+        body = self._read_json_body()
+        session_id = str(body.get("session_id", "")).strip()
+        label = str(body.get("label", "")).strip()
+        if not session_id:
+            raise ValueError("session_id is required")
+        agent = self.server.agent
+        session_key = self._session_key()
+        agent.sessions.set_label(session_key, label, session_id=session_id)
+        self._send_json({"ok": True, "session_id": session_id, "label": label, **self._state_payload()})
 
     def _handle_compact_session(self) -> None:
         body = self._read_json_body()
