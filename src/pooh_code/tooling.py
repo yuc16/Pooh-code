@@ -7,7 +7,7 @@ import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, ClassVar
 from urllib.parse import urlparse
 
 import logging
@@ -185,6 +185,15 @@ class ToolRegistry:
                         "command": {"type": "string"},
                         "cwd": {"type": "string"},
                         "timeout": {"type": "integer"},
+                        "confirmed": {
+                            "type": "boolean",
+                            "description": (
+                                "高危命令（rm -r、rm *、find -delete 等）需要用户二次确认。"
+                                "首次调用不要设置此字段，拿到拦截提示后，"
+                                "必须先把命令内容和风险告知用户并获得明确同意，"
+                                "然后再以 confirmed=true 重新调用。"
+                            ),
+                        },
                     },
                 },
             ),
@@ -377,7 +386,19 @@ class ToolRegistry:
                 self.spawn_agent_callback,
             )
 
-    def _bash(self, command: str, cwd: str = ".", timeout: int = 120) -> str:
+    _DANGEROUS_PATTERNS: ClassVar[list[re.Pattern[str]]] = [
+        re.compile(r"\brm\b.*\s-[^\s]*r"),      # rm -r / rm -rf / rm -fr
+        re.compile(r"\brm\b.*\*"),               # rm *.xxx / rm dir/*
+        re.compile(r"\bfind\b.*-delete\b"),       # find ... -delete
+        re.compile(r"\bfind\b.*-exec\s+rm\b"),    # find ... -exec rm
+        re.compile(r"\brm\b\s+-rf?\s+/"),         # rm -r / or rm -rf /
+    ]
+
+    def _is_dangerous(self, command: str) -> bool:
+        lowered = command.lower()
+        return any(pat.search(lowered) for pat in self._DANGEROUS_PATTERNS)
+
+    def _bash(self, command: str, cwd: str = ".", timeout: int = 120, confirmed: bool = False) -> str:
         if self.readonly:
             lowered = command.lower()
             denied_tokens = [
@@ -402,6 +423,15 @@ class ToolRegistry:
             padded = f" {lowered} "
             if any(token in padded or token in command for token in denied_tokens):
                 raise ValueError("readonly bash mode blocks mutating commands")
+
+        if not confirmed and self._is_dangerous(command):
+            return (
+                f"⚠️ 高危命令被拦截，未执行：\n"
+                f"  {command}\n\n"
+                f"请将此命令及其潜在影响告知用户，获得明确同意后，"
+                f"以 confirmed=true 重新调用。"
+            )
+
         workdir = _safe_workplace_path(cwd)
         argv, use_shell = _build_sandboxed_bash(command, workdir)
         completed = subprocess.run(
