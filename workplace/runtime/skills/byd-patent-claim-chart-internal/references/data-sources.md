@@ -42,6 +42,17 @@ POST https://pat.daweisoft.com/api/innojoy-search/api/v1/patent/search
 - `fields`
 - `searchType = patent_list`
 
+在本 skill 里，这一步必须附带硬约束：
+
+- `CAS=(比亚迪)`
+- `CC=(CN)`
+
+建议查询形态：
+
+```text
+(<关键词>) AND CAS=(比亚迪) AND CC=(CN)
+```
+
 建议返回字段：
 
 ```text
@@ -139,10 +150,11 @@ GET https://www.autohome.com.cn/web-main/car/param/getParamConf
 
 建议按以下顺序：
 
-1. 用大为接口按公开号精确拉专利和权利要求
-2. 用汽车之家月销榜或指定车系页筛候选竞品
-3. 用车型页和参数接口提取可用于比对的公开特征
-4. 把结果落入 `.xlsx`
+1. 如果只给主题词，先用大为接口检索“比亚迪中文有权专利”
+2. 再按公开号精确拉目标专利的权利要求
+3. 用汽车之家月销榜或指定车系页筛候选竞品
+4. 用车型页和参数接口提取可用于比对的公开特征
+5. 把结果落入 `.xlsx`
 
 ## 4. 证据边界
 

@@ -72,6 +72,7 @@
 
 优先使用：
 
+- 站内搜索结果
 - 车系页
 - 参数配置接口
 - 车型介绍页中明确可回链的内容
@@ -114,9 +115,44 @@
 本 skill 自带的脚本只是最小取数辅助：
 
 - `fetch_dawei_patent_claims.py`
-  作用：按公开号拉专利基本信息和全部中文权利要求
+  作用：按公开号拉专利基本信息和全部中文权利要求，或按关键词检索“比亚迪中文有权专利”候选列表
 - `fetch_autohome_series_params.py`
-  作用：按车系 ID 拉代表车型及关键参数
+  作用：按 agent 显式给出的关键词，先做汽车之家站内搜索，再对命中的文章/论坛链接抓详情页正文，并对候选车系补抓车型页和参数接口中的公开字段
+
+使用这个脚本时：
+
+1. agent 先阅读专利标题和全部权利要求
+2. agent 自己决定本次要检索的关键词
+3. 再把这些关键词显式传给汽车之家脚本
+4. 先看站内搜索返回的文章/视频/论坛/车系候选结果
+5. 优先使用脚本返回的 `detail.content_preview` 和 `detail.evidence_snippets`
+   其中 `detail.evidence_snippets` 是按段落匹配关键词、按内容去重后的候选证据摘录
+6. 再利用脚本自动补抓候选车系的参数页
+7. 不要把关键词逻辑预埋在脚本里
+
+推荐命令模板：
+
+```bash
+python3 workplace/runtime/skills/byd-patent-claim-chart-internal/scripts/fetch_dawei_patent_claims.py \
+  --keyword "<主题词>" \
+  --page-size 10 \
+  --output workplace/output/<session_id>/byd_patents.json
+```
+
+```bash
+python3 workplace/runtime/skills/byd-patent-claim-chart-internal/scripts/fetch_dawei_patent_claims.py \
+  --pnm <专利号> \
+  --output workplace/output/<session_id>/<专利号>.json
+```
+
+```bash
+python3 workplace/runtime/skills/byd-patent-claim-chart-internal/scripts/fetch_autohome_series_params.py \
+  --keyword "<关键词1>" \
+  --keyword "<关键词2>" \
+  --max-results 8 \
+  --max-series 3 \
+  --output workplace/output/<session_id>/<竞品名>_autohome.json
+```
 
 它们都不能替代：
 
