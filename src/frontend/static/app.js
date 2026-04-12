@@ -137,12 +137,18 @@ async function api(path, opts = {}) {
 
 function buildToolGroupHTML(tools) {
   if (!tools || !tools.length) return "";
+  const downloadPaths = [];
   const items = tools.map((t) => {
     const inputJson = escapeHtml(JSON.stringify(t.input || {}, null, 2));
     const resultText = escapeHtml(t.result || "");
     const errClass = t.is_error ? " error" : "";
     const statusLabel = t.is_error ? "失败" : "完成";
     const resultLabel = t.is_error ? "ERROR" : "OUTPUT";
+    // 检测文件下载
+    if (!t.is_error && t.result) {
+      const outputPath = _extractOutputPath(t.name, t.result);
+      if (outputPath) downloadPaths.push(outputPath);
+    }
     return `<div class="tool-block${errClass}">
       <div class="tool-head">
         <span class="badge">TOOL</span>
@@ -156,6 +162,19 @@ function buildToolGroupHTML(tools) {
       </div>
     </div>`;
   }).join("");
+  // 在工具组后面追加下载按钮
+  let downloadHTML = "";
+  if (downloadPaths.length) {
+    const btns = downloadPaths.map((p) => {
+      const name = p.split("/").pop();
+      const icon = _fileIcon(name);
+      return `<a class="file-download" href="/api/download?path=${encodeURIComponent(p)}" target="_blank">` +
+        `<span class="file-icon">${icon}</span>` +
+        `<span class="file-info"><span class="file-name">${escapeHtml(name)}</span>` +
+        `<span class="file-meta">点击下载</span></span></a>`;
+    }).join("");
+    downloadHTML = `<div class="stream-part" style="display:flex;flex-wrap:wrap;gap:8px">${btns}</div>`;
+  }
   return `<div class="thinking-group stream-part collapsed">
     <div class="thinking-head" onclick="this.parentElement.classList.toggle('collapsed')">
       <span class="thinking-icon">⊙</span>
@@ -164,7 +183,7 @@ function buildToolGroupHTML(tools) {
       <span class="caret">▾</span>
     </div>
     <div class="thinking-body">${items}</div>
-  </div>`;
+  </div>${downloadHTML}`;
 }
 
 async function refreshMessages() {
@@ -435,6 +454,17 @@ function attachToolResult(bubble, { tool_use_id, name, content, is_error }) {
   pre.textContent = content || "";
   body.appendChild(label);
   body.appendChild(pre);
+
+  // 检测是否在 output/ 下生成了文件，自动添加下载按钮
+  if (!is_error && content) {
+    const outputPath = _extractOutputPath(name, content);
+    if (outputPath) {
+      const dlBtn = createDownloadButton(outputPath);
+      // 追加到气泡主体（不在折叠的 tool group 里），让用户更容易看到
+      if (!bubble._pendingDownloads) bubble._pendingDownloads = [];
+      bubble._pendingDownloads.push(dlBtn);
+    }
+  }
   autoScrollIfNear();
 }
 
@@ -442,6 +472,58 @@ function autoScrollIfNear() {
   const el = els.messages;
   const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
   if (nearBottom) el.scrollTop = el.scrollHeight;
+}
+
+// ---------- file download ----------
+const FILE_ICONS = {
+  ".docx": "📄", ".doc": "📄",
+  ".xlsx": "📊", ".xls": "📊", ".csv": "📊",
+  ".pptx": "📑", ".ppt": "📑",
+  ".pdf": "📕", ".txt": "📝", ".md": "📝",
+  ".png": "🖼️", ".jpg": "🖼️", ".jpeg": "🖼️", ".gif": "🖼️", ".svg": "🖼️",
+  ".zip": "📦", ".json": "📋", ".html": "🌐",
+};
+
+function _fileIcon(name) {
+  const ext = (name.match(/\.[^.]+$/) || [""])[0].toLowerCase();
+  return FILE_ICONS[ext] || "📁";
+}
+
+function _humanSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * 从 write_file 工具结果中提取 output/ 下的文件路径，返回相对于 output/ 的路径。
+ * 例如 "wrote 1234 chars to /abs/path/workplace/output/report.docx" → "report.docx"
+ */
+function _extractOutputPath(toolName, resultText) {
+  if (toolName !== "write_file" && toolName !== "bash") return null;
+  // write_file 的结果格式: "wrote N chars to <path>"
+  const writeMatch = resultText.match(/wrote \d+ chars to .*?workplace\/output\/(.+)/);
+  if (writeMatch) return writeMatch[1];
+  // bash 结果里可能也有 workplace/output/ 文件生成的痕迹
+  if (toolName === "bash") {
+    const bashMatch = resultText.match(/workplace\/output\/([^\s"']+\.\w{2,5})/);
+    if (bashMatch) return bashMatch[1];
+  }
+  return null;
+}
+
+function createDownloadButton(relPath) {
+  const name = relPath.split("/").pop();
+  const a = document.createElement("a");
+  a.className = "file-download";
+  a.href = `/api/download?path=${encodeURIComponent(relPath)}`;
+  a.target = "_blank";
+  a.innerHTML = `<span class="file-icon">${_fileIcon(name)}</span>` +
+    `<span class="file-info">` +
+    `<span class="file-name">${escapeHtml(name)}</span>` +
+    `<span class="file-meta">点击下载</span>` +
+    `</span>`;
+  return a;
 }
 
 async function streamChat(text) {
@@ -519,6 +601,18 @@ async function streamChat(text) {
         bubble.body.classList.add("rendered");
         if (!bubble.body.textContent.trim()) {
           bubble.body.innerHTML = renderMarkdown(evt.text || "(empty response)");
+        }
+        // 将累积的下载按钮追加到气泡末尾
+        if (bubble._pendingDownloads && bubble._pendingDownloads.length) {
+          const dlContainer = document.createElement("div");
+          dlContainer.className = "stream-part";
+          dlContainer.style.display = "flex";
+          dlContainer.style.flexWrap = "wrap";
+          dlContainer.style.gap = "8px";
+          for (const btn of bubble._pendingDownloads) {
+            dlContainer.appendChild(btn);
+          }
+          bubble.body.appendChild(dlContainer);
         }
         if (evt.session_id) {
           state.sessionId = evt.session_id;

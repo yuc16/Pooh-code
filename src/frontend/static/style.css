@@ -1035,6 +1035,55 @@ body.sidebar-collapsed {
   cursor: not-allowed;
 }
 
+/* ---------- file download button ---------- */
+.file-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  margin: 6px 0;
+  background: var(--accent-bg);
+  border: 1px solid rgba(214, 154, 60, 0.35);
+  border-radius: 8px;
+  cursor: pointer;
+  text-decoration: none;
+  color: var(--accent-soft);
+  font-size: 13px;
+  font-family: var(--sans);
+  transition: all 0.15s ease;
+}
+
+.file-download:hover {
+  background: rgba(214, 154, 60, 0.2);
+  border-color: var(--accent);
+  color: var(--accent-soft);
+  text-decoration: none;
+}
+
+.file-download .file-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.file-download .file-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.file-download .file-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-download .file-meta {
+  font-size: 11px;
+  color: var(--fg-mute);
+}
+
 /* ---------- scrollbar ---------- */
 ::-webkit-scrollbar {
   width: 8px;

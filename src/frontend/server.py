@@ -29,6 +29,9 @@ if str(_SRC_DIR) not in sys.path:
 from pooh_code.agent import PoohAgent  # noqa: E402
 from pooh_code.commands import CommandProcessor  # noqa: E402
 from pooh_code.config import load_settings  # noqa: E402
+from pooh_code.paths import WORKPLACE_DIR  # noqa: E402
+
+OUTPUT_DIR = WORKPLACE_DIR / "output"
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 WEB_CHANNEL = "web"
@@ -43,6 +46,26 @@ MIME_TYPES = {
     ".svg": "image/svg+xml",
     ".png": "image/png",
     ".ico": "image/x-icon",
+}
+
+# 文件下载支持的 MIME 类型
+DOWNLOAD_MIME_TYPES = {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".pdf": "application/pdf",
+    ".csv": "text/csv; charset=utf-8",
+    ".tsv": "text/tab-separated-values; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+    ".md": "text/markdown; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".html": "text/html; charset=utf-8",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".zip": "application/zip",
 }
 
 
@@ -186,6 +209,10 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 return self._handle_messages()
             if path == "/api/sessions":
                 return self._handle_sessions()
+            if path == "/api/files":
+                return self._handle_files()
+            if path == "/api/download":
+                return self._handle_download(parsed)
             if path == "/" or path == "/index.html":
                 return self._serve_static("index.html")
             if path.startswith("/static/"):
@@ -419,6 +446,63 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 **self._state_payload(),
             }
         )
+
+    def _handle_files(self) -> None:
+        """列出 workplace/output/ 中的文件，支持浏览和下载。"""
+        if not OUTPUT_DIR.exists():
+            self._send_json({"ok": True, "files": []})
+            return
+        files: list[dict[str, Any]] = []
+        for f in sorted(OUTPUT_DIR.rglob("*")):
+            if not f.is_file():
+                continue
+            # 跳过 .git 目录下的文件
+            rel = f.relative_to(OUTPUT_DIR)
+            if any(part.startswith(".") for part in rel.parts):
+                continue
+            stat = f.stat()
+            files.append({
+                "path": str(rel),
+                "name": f.name,
+                "size": stat.st_size,
+                "modified": stat.st_mtime,
+                "suffix": f.suffix.lower(),
+            })
+        # 按修改时间降序
+        files.sort(key=lambda x: x["modified"], reverse=True)
+        self._send_json({"ok": True, "files": files})
+
+    def _handle_download(self, parsed: Any) -> None:
+        """下载 workplace/output/ 中的文件。"""
+        qs = parse_qs(parsed.query)
+        rel_path = (qs.get("path") or [""])[0].strip()
+        if not rel_path:
+            self._send_error_json(400, "path parameter is required")
+            return
+        # 防止路径穿越
+        target = (OUTPUT_DIR / rel_path).resolve()
+        if not str(target).startswith(str(OUTPUT_DIR.resolve())):
+            self._send_error_json(403, "forbidden: path traversal")
+            return
+        if not target.exists() or not target.is_file():
+            self._send_error_json(404, f"not found: {rel_path}")
+            return
+        mime = DOWNLOAD_MIME_TYPES.get(target.suffix.lower(), "application/octet-stream")
+        data = target.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(data)))
+        # 对 Office 文件和二进制文件使用 attachment 触发下载
+        disposition = "attachment" if target.suffix.lower() in {
+            ".docx", ".xlsx", ".pptx", ".pdf", ".zip", ".csv", ".tsv",
+        } else "inline"
+        self.send_header(
+            "Content-Disposition",
+            f'{disposition}; filename="{target.name}"',
+        )
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
 
     def _handle_compact_session(self) -> None:
         agent = self.server.agent
