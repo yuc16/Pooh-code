@@ -428,7 +428,12 @@ def _consume_sse(
         buf = tc_buffers[tidx]
         try:
             parsed = json.loads(buf["arguments"] or "{}")
+            if not isinstance(parsed, dict):
+                # Model returned a JSON scalar instead of an object
+                parsed = {"raw": buf["arguments"]}
         except Exception:
+            # Arguments were truncated or malformed (often hits max_tokens).
+            # Store the partial string so tooling.py can return a clear retry hint.
             parsed = {"raw": buf["arguments"]}
         tool_calls.append({"id": buf["id"], "name": buf["name"], "input": parsed})
         emit("tool_use_done", {

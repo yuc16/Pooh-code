@@ -396,9 +396,7 @@ class PoohAgent:
                         system=system_prompt,
                         messages=messages,
                         tools=self.tools.specs(),
-                        max_tokens=4096,
-                        on_event=on_event,
-                        cancel_event=cancel_event,
+                        max_tokens=8192,
                     )
                 except RuntimeError as exc:
                     if _is_cancelled_error(exc):
@@ -558,7 +556,7 @@ class PoohAgent:
                     system=system_prompt,
                     messages=messages,
                     tools=self.tools.specs(),
-                    max_tokens=4096,
+                    max_tokens=8192,
                 )
                 if response.usage:
                     self.sessions.set_last_usage(session_key, response.usage, session_id=session_id)

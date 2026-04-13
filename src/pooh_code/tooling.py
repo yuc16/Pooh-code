@@ -172,6 +172,22 @@ class ToolRegistry:
         handler = self._handlers.get(name)
         if handler is None:
             return f"Unknown tool: {name}"
+        # Some LLMs wrap arguments in {"raw": "..."} when JSON serialisation
+        # fails (e.g. arguments truncated mid-stream).  Try to unwrap it.
+        if set(payload.keys()) == {"raw"}:
+            raw_val = payload["raw"]
+            if isinstance(raw_val, str):
+                try:
+                    parsed = json.loads(raw_val)
+                    if isinstance(parsed, dict):
+                        payload = parsed
+                except Exception:
+                    return (
+                        f"Tool {name} failed: arguments were not valid JSON "
+                        f"(likely truncated mid-generation). "
+                        f"Please retry the call with complete, properly-formed arguments. "
+                        f"Partial value received: {raw_val[:300]!r}"
+                    )
         try:
             result = handler(**payload)
         except Exception as exc:
