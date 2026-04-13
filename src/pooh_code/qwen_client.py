@@ -146,25 +146,41 @@ def _build_oai_messages(
 
 
 def _sanitize_oai_messages(msgs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove orphaned tool messages that have no preceding assistant with tool_calls.
+    """Fix message list to be accepted by OpenAI-compatible APIs.
 
-    This can happen when a session is compressed and the split boundary lands
-    between an assistant(tool_use) and the corresponding user(tool_result).
-    Sending such orphaned tool messages to the API causes HTTP 400.
+    Two passes:
+    1. Remove orphaned tool messages (no preceding assistant with tool_calls).
+       This happens when session compression splits between assistant(tool_use)
+       and user(tool_result), causing HTTP 400.
+    2. Merge consecutive system messages into one.
+       Many models / proxies (including Qwen via vLLM) reject multiple system
+       messages; this is triggered whenever a compressed-summary system message
+       follows the main agent system prompt.
     """
-    out: list[dict[str, Any]] = []
+    # Pass 1: drop orphaned tool messages
+    deorphaned: list[dict[str, Any]] = []
     for msg in msgs:
         if msg.get("role") == "tool":
-            prev = out[-1] if out else None
+            prev = deorphaned[-1] if deorphaned else None
             if not (
                 prev
                 and prev.get("role") == "assistant"
                 and prev.get("tool_calls")
             ):
-                # Orphaned tool result — skip to avoid 400
-                continue
-        out.append(msg)
-    return out
+                continue  # orphaned — skip
+        deorphaned.append(msg)
+
+    # Pass 2: merge consecutive system messages
+    merged: list[dict[str, Any]] = []
+    for msg in deorphaned:
+        if msg.get("role") == "system" and merged and merged[-1].get("role") == "system":
+            prev_content = merged[-1].get("content") or ""
+            new_content  = msg.get("content") or ""
+            merged[-1] = {"role": "system", "content": f"{prev_content}\n\n{new_content}"}
+        else:
+            merged.append(msg)
+
+    return merged
 
 
 def _convert_user_message(content: Any) -> list[dict[str, Any]]:
