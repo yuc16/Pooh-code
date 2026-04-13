@@ -892,12 +892,42 @@ def main() -> int:
         raise SystemExit("请先让 agent 生成关键词，再通过 --keyword 传入。")
 
     patent_context = load_patent_context(args.patent_json)
-    search_payloads = [
-        search_autohome(query=keyword, max_results=args.max_results, cityid=args.cityid, include_raw=args.include_raw)
-        for keyword in keywords
-    ]
+
+    # ── 搜索阶段：每个关键词单独 try/except，网络不通时记录错误继续 ──────────
+    search_payloads = []
+    for keyword in keywords:
+        try:
+            search_payloads.append(
+                search_autohome(
+                    query=keyword,
+                    max_results=args.max_results,
+                    cityid=args.cityid,
+                    include_raw=args.include_raw,
+                )
+            )
+        except Exception as exc:
+            search_payloads.append({
+                "query": keyword,
+                "error": True,
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+                "candidate_series": [],
+            })
+
     series_ids = choose_series_ids(args.series_ids, search_payloads, args.max_series)
-    series_payloads = [fetch_series_bundle(series_id, keywords, args.include_raw) for series_id in series_ids]
+
+    # ── 车系抓取阶段：每个 series_id 单独 try/except ───────────────────────
+    series_payloads = []
+    for series_id in series_ids:
+        try:
+            series_payloads.append(fetch_series_bundle(series_id, keywords, args.include_raw))
+        except Exception as exc:
+            series_payloads.append({
+                "series_id": series_id,
+                "error": True,
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+            })
 
     output = {
         "source": "汽车之家",
@@ -908,6 +938,17 @@ def main() -> int:
         "selected_series_ids": series_ids,
         "series_evidence": series_payloads,
     }
+
+    # 搜索全部失败且没有显式指定 series_id 时，给 agent 明确的后续指引
+    all_search_failed = bool(search_payloads) and all(p.get("error") for p in search_payloads)
+    if all_search_failed and not args.series_ids:
+        output["agent_hint"] = (
+            "汽车之家搜索接口（sou.autohome.com.cn）在当前网络环境下无法访问，"
+            "搜索步骤已跳过。"
+            "请根据专利主题自行判断目标竞品车系，通过 --series-id 参数重新调用本脚本，"
+            "可直接抓取车系页和参数（www.autohome.com.cn 通常可正常访问）。"
+            "例如：比亚迪汉=3837，海豹=5023，唐=735，宋Plus=4615。"
+        )
 
     text = json.dumps(output, ensure_ascii=False, indent=2)
     if args.output:
