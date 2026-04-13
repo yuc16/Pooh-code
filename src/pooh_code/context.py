@@ -27,6 +27,29 @@ RECENT_MAX_MESSAGES = 30
 SUMMARY_PREFIX = "以下是已压缩的历史上下文摘要"
 
 
+def _is_tool_result_only(msg: dict[str, Any]) -> bool:
+    """Return True if msg is a user message containing only tool_result blocks."""
+    if msg.get("role") != "user":
+        return False
+    content = msg.get("content")
+    if not isinstance(content, list) or not content:
+        return False
+    return all(
+        isinstance(b, dict) and b.get("type") == "tool_result"
+        for b in content
+    )
+
+
+def _is_assistant_with_tool_calls(msg: dict[str, Any]) -> bool:
+    """Return True if msg is an assistant message that contains tool_use blocks."""
+    if msg.get("role") != "assistant":
+        return False
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(b, dict) and b.get("type") == "tool_use" for b in content)
+
+
 def estimate_tokens_for_text(text: str) -> int:
     if not text:
         return 0
@@ -238,6 +261,20 @@ class ContextManager:
 
         if not old_messages:
             return messages
+
+        # ── 1b. 边界修正：避免 recent 以孤立的 tool_result 开头 ───────────────
+        # 如果 recent[0] 是纯 tool_result 用户消息（对应的 assistant tool_use
+        # 被划入了 old），必须把 old 末尾那条 assistant 消息移进 recent，
+        # 否则发给 API 时会因"孤立 tool 消息"报 400。
+        if (
+            recent_messages
+            and old_messages
+            and _is_tool_result_only(recent_messages[0])
+            and _is_assistant_with_tool_calls(old_messages[-1])
+        ):
+            recent_messages = [old_messages.pop()] + recent_messages
+            if not old_messages:
+                return messages
 
         # ── 2. 递归压缩：如果第一条已是旧摘要，把它也当成"待压缩"输入，
         # 输出的新摘要会"覆盖"它，避免摘要无限累积。

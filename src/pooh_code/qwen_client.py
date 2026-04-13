@@ -142,7 +142,29 @@ def _build_oai_messages(
         elif role == "assistant":
             result.append(_convert_assistant_message(content))
 
-    return result
+    return _sanitize_oai_messages(result)
+
+
+def _sanitize_oai_messages(msgs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove orphaned tool messages that have no preceding assistant with tool_calls.
+
+    This can happen when a session is compressed and the split boundary lands
+    between an assistant(tool_use) and the corresponding user(tool_result).
+    Sending such orphaned tool messages to the API causes HTTP 400.
+    """
+    out: list[dict[str, Any]] = []
+    for msg in msgs:
+        if msg.get("role") == "tool":
+            prev = out[-1] if out else None
+            if not (
+                prev
+                and prev.get("role") == "assistant"
+                and prev.get("tool_calls")
+            ):
+                # Orphaned tool result — skip to avoid 400
+                continue
+        out.append(msg)
+    return out
 
 
 def _convert_user_message(content: Any) -> list[dict[str, Any]]:
