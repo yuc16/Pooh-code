@@ -8,7 +8,7 @@ from typing import Any
 from .config import AgentConfig
 from .context import ContextManager, ContextUsage
 from .models import AgentReply, ToolSpec, ToolSpec
-from .openai_codex import PoohCodexClient
+from .qwen_client import QwenClient
 from .file_processing import process_file
 from .output_files import OUTPUT_DIR, ensure_session_output_dir
 from .paths import BOOTSTRAP_FILES, PROJECT_ROOT, RUNTIME_DIR, ensure_runtime_dirs
@@ -44,7 +44,7 @@ class PoohAgent:
         self.readonly = readonly
         self.enable_subagents = enable_subagents
         self.extra_system_prompt = extra_system_prompt
-        self.client = PoohCodexClient()
+        self.client = QwenClient()
         self.context = ContextManager(
             self.client,
             self.config.model,

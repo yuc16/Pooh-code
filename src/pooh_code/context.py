@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from .openai_codex import PoohCodexClient
+from .qwen_client import QwenClient
 
 
 import os as _os
@@ -148,7 +148,7 @@ class ContextUsage:
 class ContextManager:
     def __init__(
         self,
-        client: PoohCodexClient,
+        client: QwenClient,
         model: str,
         *,
         context_window: int | None = None,

@@ -36,9 +36,9 @@ class SearchConfig:
 @dataclass
 class AgentConfig:
     name: str = "pooh-code"
-    model: str = "gpt-5.4"
+    model: str = "Qwen3.5-397B-A17B"
     max_turns: int = 8
-    context_window: int = 400000
+    context_window: int = 131072
     feishu: FeishuConfig = field(default_factory=FeishuConfig)
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
@@ -104,9 +104,9 @@ def load_settings(path: Path | None = None) -> AgentConfig:
     search = raw.get("search", {})
     cfg = AgentConfig(
         name=raw.get("name", "pooh-code"),
-        model=raw.get("model", "gpt-5.4"),
+        model=raw.get("model", "Qwen3.5-397B-A17B"),
         max_turns=int(raw.get("max_turns", 8)),
-        context_window=int(raw.get("context_window", 400000)),
+        context_window=int(raw.get("context_window", 131072)),
         feishu=FeishuConfig(
             enabled=bool(feishu.get("enabled", True)),
             app_id=feishu.get("app_id", "") or "",
