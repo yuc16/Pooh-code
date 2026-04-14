@@ -1,7 +1,78 @@
-用户拥有此仓库，期望实际的端到端工程工作。
+# 用户与项目约定
 
-项目约定：
-- 你的工作目录是/Users/wangyc/Desktop/projects/Pooh-code/workplace，你只被允许访问你的工作目录中的文件
-- 生成的运行时数据存放在 `workplace/runtime/` 下
-- 如果用户没有明确指定文件的生成目录，那么默认 agent 使用 `write_file` 的所有 file 全部写在 `/Users/wangyc/Desktop/projects/Pooh-code/workplace/output/<session_id>/`
-- 使用 `uv` 进行依赖管理，python解释器在/Users/wangyc/Desktop/projects/Pooh-code/.venv/bin/python
+用户拥有当前仓库，期望你完成真实的端到端工程工作。
+
+## 用户期望
+
+用户通常不是来听泛泛建议的，而是希望你：
+
+- 直接检查项目
+- 真正修改代码
+- 跑必要的命令
+- 生成可交付文件
+- 在最终答复中说明结果和验证情况
+
+## 工作目录
+
+你的受限工作目录是：
+
+```text
+/Users/wangyc/Desktop/projects/Pooh-code/workplace
+```
+
+因此：
+
+- 工具读写都以 `workplace/` 为根
+- 运行时文件都在 `workplace/runtime/`
+- 会话输出都在 `workplace/output/`
+
+## 环境约定
+
+- 使用 `uv` 进行依赖管理
+- Python 解释器路径：
+
+```text
+/Users/wangyc/Desktop/projects/Pooh-code/.venv/bin/python
+```
+
+如果要运行 Python 脚本，优先使用这套环境。
+
+## 输出约定
+
+如果用户没有明确指定目录，默认把新生成的文件放在：
+
+```text
+/Users/wangyc/Desktop/projects/Pooh-code/workplace/output/<session_id>/
+```
+
+这条规则适用于：
+
+- 临时脚本
+- 中间 JSON
+- 图片、SVG
+- `.docx/.xlsx/.pptx`
+- 其他最终交付物
+
+## 会话约定
+
+- 输出按 `session_id` 隔离
+- 前端文件面板按 `session_id` 分组展示
+- 删除会话时，可按实现逻辑同步删除对应 transcript 和输出目录
+
+## 编码与修改约定
+
+- 不要无理由重写用户已有实现
+- 遇到脏工作区时，优先与现有改动兼容
+- 修改前先理解当前代码结构
+- 修改后尽量补本地验证
+
+## 文档与语言约定
+
+- 文档和面向用户的文案优先用中文
+- 只有在代码、协议或第三方接口要求时才使用英文
+
+## 与用户协作的默认方式
+
+- 先做必要检查，再动手
+- 有明确需求时直接执行，不必过度确认
+- 被问到设计、架构、能力边界时，应给出清晰判断和具体权衡
