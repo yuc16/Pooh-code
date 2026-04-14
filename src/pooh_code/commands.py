@@ -26,7 +26,7 @@ class CommandProcessor:
         if command == "/help":
             return CommandResult(
                 True,
-                "/help /clear /new /switch <session_id_prefix> /compact /ctx /sessions /skills /prompt /model [name] /subagent <task> /exit",
+                "/help /clear /new /switch <session_id_prefix> /compact /ctx /sessions /skills /model [name] /exit",
             )
         if command == "/clear":
             session_id = self.agent.sessions.clear_session(session_key)
@@ -90,23 +90,11 @@ class CommandProcessor:
         if command == "/skills":
             names = self.agent.skills.list_names()
             return CommandResult(True, "\n".join(names) or "(no skills)")
-        if command == "/prompt":
-            return CommandResult(True, self.agent.build_system_prompt(""))
         if command == "/model":
             if argument:
                 self.agent.config.model = argument.strip()
                 return CommandResult(True, f"model set to {self.agent.config.model}")
             return CommandResult(True, self.agent.config.model)
-        if command == "/subagent":
-            if not argument:
-                return CommandResult(True, "usage: /subagent <task>")
-            result = self.agent.run_subagent(
-                session_key,
-                description="manual-subagent",
-                prompt=argument,
-                agent_type="explorer",
-            )
-            return CommandResult(True, result)
         if command == "/exit":
             return CommandResult(True, "__EXIT__")
         return CommandResult(True, f"unknown command: {command}")

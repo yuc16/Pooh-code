@@ -35,6 +35,12 @@ let state = {
   sessionKey: null,
   runningSessions: new Set(),
   pendingFiles: [], // [{file: File, serverPath: string, name: string}]
+  capabilities: null,
+  welcomeCardsCollapsed: {
+    commands: false,
+    tools: false,
+    skills: false,
+  },
 };
 
 const SIDEBAR_WIDTH_KEY = "pooh.sidebar.width";
@@ -80,7 +86,7 @@ function enableDragScroll(container) {
 
   container.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
-    if (e.target.closest("button, input, textarea, select, label")) return;
+    if (e.target.closest("button, input, textarea, select, label, summary, details, a, [data-copy-skill]")) return;
     e.preventDefault();
     pointerId = e.pointerId;
     startY = e.clientY;
@@ -151,6 +157,14 @@ scrollBtn.addEventListener("click", () => {
   els.messages.scrollTo({ top: els.messages.scrollHeight, behavior: "smooth" });
 });
 
+function syncIntroMode(hasMessages) {
+  if (!els.messages) return;
+  els.messages.classList.toggle("intro-mode", !hasMessages);
+  if (!hasMessages) {
+    scrollBtn?.classList.add("hidden");
+  }
+}
+
 function setStatus(kind, text) {
   els.statusDot.className = "dot";
   if (kind === "busy") els.statusDot.classList.add("busy");
@@ -194,6 +208,159 @@ function updateRunningUI() {
   setStatus("ok", "就绪");
 }
 
+function renderWelcomePanel() {
+  if (!els.emptyHint) return;
+  const caps = state.capabilities || {};
+  const commands = Array.isArray(caps.commands) ? caps.commands : [];
+  const tools = Array.isArray(caps.tools) ? caps.tools : [];
+  const skills = Array.isArray(caps.skills) ? caps.skills : [];
+  const commandHtml = commands.length
+    ? commands.map((item) => {
+        const name = escapeHtml(item.name || "");
+        const desc = escapeHtml(item.desc || "");
+        return `
+          <details class="empty-item empty-item-command">
+            <summary class="empty-item-summary">
+              <span class="empty-item-name" title="${name}">${name}</span>
+              <span class="empty-item-toggle" aria-hidden="true"></span>
+            </summary>
+            <div class="empty-item-body">
+              <p class="empty-item-desc">${desc}</p>
+              <button class="empty-item-action" data-cmd="${name}">立即发送</button>
+            </div>
+          </details>
+        `;
+      }).join("")
+    : `<div class="empty-note">当前未返回命令列表</div>`;
+  const toolHtml = tools.length
+    ? tools.map((tool) => {
+        const desc = escapeHtml(tool.description || "");
+        return `
+          <details class="empty-item empty-item-tool">
+            <summary class="empty-item-summary">
+              <span class="empty-item-name" title="${escapeHtml(tool.name || "")}">${escapeHtml(tool.name || "")}</span>
+              <span class="empty-item-toggle" aria-hidden="true"></span>
+            </summary>
+            <div class="empty-item-body">
+              <p class="empty-item-desc">${desc}</p>
+            </div>
+          </details>
+        `;
+      }).join("")
+    : `<div class="empty-note">当前未返回工具列表</div>`;
+  const skillHtml = skills.length
+    ? skills.map((skill) => {
+        const name = escapeHtml(skill?.name || "");
+        const desc = escapeHtml(skill?.description || "当前技能未提供描述。");
+        return `
+          <details class="empty-item empty-item-skill">
+            <summary class="empty-item-summary">
+              <span class="empty-item-name empty-skill-copy" title="${name}" data-copy-skill="${name}" role="button" tabindex="0">${name}</span>
+              <span class="empty-item-toggle" aria-hidden="true"></span>
+            </summary>
+            <div class="empty-item-body">
+              <p class="empty-item-desc">${desc}</p>
+            </div>
+          </details>
+        `;
+      }).join("")
+    : `<div class="empty-note">当前没有已加载技能</div>`;
+
+  els.emptyHint.innerHTML = `
+    <section class="empty-hero">
+      <div class="empty-welcome">
+        <div class="empty-badge">Pooh Code 工作台</div>
+        <div class="empty-title">开始和 Pooh Code 对话</div>
+        <div class="empty-sub">我可以在云端仓库写代码、改代码、跑命令、处理 Office 文件、分析图片与视频、调用技能，并在同一会话中持续推进任务。</div>
+      </div>
+      <div class="empty-hero-rail">
+        <div class="empty-hero-chip"><span>Slash Commands</span><strong>${commands.length}</strong></div>
+        <div class="empty-hero-chip"><span>Built-in Tools</span><strong>${tools.length}</strong></div>
+        <div class="empty-hero-chip"><span>Loaded Skills</span><strong>${skills.length}</strong></div>
+      </div>
+    </section>
+    <div class="empty-grid${Object.values(state.welcomeCardsCollapsed).some(Boolean) ? " compact-layout" : ""}">
+      <section class="empty-card empty-card-commands${state.welcomeCardsCollapsed.commands ? " collapsed" : ""}" data-card="commands">
+        <div class="empty-card-head">
+          <span class="empty-card-title">Commands</span>
+          <div class="empty-card-head-actions">
+            <span class="empty-card-meta">${commands.length} 项</span>
+            <button class="empty-card-toggle" type="button" data-card-toggle="commands">${state.welcomeCardsCollapsed.commands ? "展开" : "折叠"}</button>
+          </div>
+        </div>
+        <div class="empty-card-sub">常用 slash commands。默认只展示名称，点开后可查看说明并直接发送。</div>
+        <div class="empty-card-body">
+          <div class="empty-command-list">${commandHtml}</div>
+        </div>
+      </section>
+      <section class="empty-card empty-card-tools${state.welcomeCardsCollapsed.tools ? " collapsed" : ""}" data-card="tools">
+        <div class="empty-card-head">
+          <span class="empty-card-title">Tools</span>
+          <div class="empty-card-head-actions">
+            <span class="empty-card-meta">${tools.length} 项</span>
+            <button class="empty-card-toggle" type="button" data-card-toggle="tools">${state.welcomeCardsCollapsed.tools ? "展开" : "折叠"}</button>
+          </div>
+        </div>
+        <div class="empty-card-sub">当前模型可直接调用的内置工具。默认收起详情，需要时展开查看。</div>
+        <div class="empty-card-body">
+          <div class="empty-tool-grid">${toolHtml}</div>
+        </div>
+      </section>
+      <section class="empty-card empty-card-skills${state.welcomeCardsCollapsed.skills ? " collapsed" : ""}" data-card="skills">
+        <div class="empty-card-head">
+          <span class="empty-card-title">Skills</span>
+          <div class="empty-card-head-actions">
+            <span class="empty-card-meta">${skills.length} 项</span>
+            <button class="empty-card-toggle" type="button" data-card-toggle="skills">${state.welcomeCardsCollapsed.skills ? "展开" : "折叠"}</button>
+          </div>
+        </div>
+        <div class="empty-card-sub">Skills 会按需加载完整工作流说明。默认只显示技能名，展开后查看用途描述。</div>
+        <div class="empty-card-body">
+          <div class="empty-skill-list">${skillHtml}</div>
+        </div>
+      </section>
+    </div>
+  `;
+  els.emptyHint.querySelectorAll(".empty-item-action[data-cmd]").forEach((button) => {
+    button.addEventListener("click", () => {
+      sendMessage(button.dataset.cmd || "");
+    });
+  });
+  els.emptyHint.querySelectorAll(".empty-card-body").forEach((container) => {
+    enableDragScroll(container);
+  });
+  els.emptyHint.querySelectorAll("[data-copy-skill]").forEach((node) => {
+    const copySkillName = async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const text = node.getAttribute("data-copy-skill") || "";
+      if (!text) return;
+      try {
+        await copyToClipboard(text);
+        const original = node.textContent;
+        node.textContent = "已复制";
+        window.setTimeout(() => {
+          node.textContent = original;
+        }, 1200);
+      } catch (_) {}
+    };
+    node.addEventListener("click", copySkillName);
+    node.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        copySkillName(e);
+      }
+    });
+  });
+  els.emptyHint.querySelectorAll(".empty-card-toggle[data-card-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const card = button.dataset.cardToggle || "";
+      if (!card) return;
+      state.welcomeCardsCollapsed[card] = !state.welcomeCardsCollapsed[card];
+      renderWelcomePanel();
+    });
+  });
+}
+
 function applyState(payload) {
   if (!payload) return;
   if (payload.session_id) {
@@ -211,6 +378,10 @@ function applyState(payload) {
   if (payload.usage) {
     els.usageLabel.textContent = payload.usage.display || "—";
     if (els.contextPill) els.contextPill.textContent = payload.usage.display || "--/--";
+  }
+  if (payload.capabilities) {
+    state.capabilities = payload.capabilities;
+    renderWelcomePanel();
   }
   updateRunningUI();
 }
@@ -365,12 +536,6 @@ function renderMarkdown(text) {
   return renderInline(text);
 }
 
-function hideEmptyHint() {
-  if (els.emptyHint && els.emptyHint.parentNode) {
-    els.emptyHint.remove();
-  }
-}
-
 let _msgIndex = 0;
 
 function setCopyButtonState(button, text) {
@@ -469,7 +634,6 @@ function enhanceRenderedContent(container) {
 }
 
 function createMessageShell(role, { navId = null } = {}) {
-  hideEmptyHint();
   const root = document.createElement("div");
   root.className = `msg ${role}`;
   if (navId) {
@@ -493,6 +657,7 @@ function createMessageShell(role, { navId = null } = {}) {
 }
 
 function appendMessage(role, text, { scroll = true } = {}) {
+  syncIntroMode(true);
   const shell = createMessageShell(role, {
     navId: role === "user" ? `msg-${_msgIndex++}` : null,
   });
@@ -584,28 +749,28 @@ async function refreshMessages() {
     const data = await api(`/api/messages${query}`);
     applyState(data);
     clearMessages();
-    if (!data.messages || data.messages.length === 0) {
-      els.messages.appendChild(els.emptyHint || document.createElement("div"));
-    } else {
-      for (const m of data.messages) {
-        if (m.role === "assistant") {
-          const shell = createMessageShell("assistant");
-          let bodyHTML = "";
-          if (m.tools && m.tools.length) {
-            bodyHTML += buildToolGroupHTML(m.tools);
-          }
-          if (m.text && m.text.trim()) {
-            bodyHTML += `<div class="stream-part">${renderMarkdown(m.text)}</div>`;
-          }
-          shell.body.classList.add("rendered");
-          shell.body.innerHTML = bodyHTML || renderMarkdown("(empty response)");
-          enhanceRenderedContent(shell.body);
-          setCopyButtonState(shell.copyBtn, m.text || shell.body.textContent || "");
-          els.messages.appendChild(shell.root);
-        } else if (m.text && m.text.trim()) {
-          appendMessage(m.role, m.text, { scroll: false });
+    els.messages.appendChild(els.emptyHint || document.createElement("div"));
+    syncIntroMode((data.messages || []).length > 0);
+    for (const m of data.messages || []) {
+      if (m.role === "assistant") {
+        const shell = createMessageShell("assistant");
+        let bodyHTML = "";
+        if (m.tools && m.tools.length) {
+          bodyHTML += buildToolGroupHTML(m.tools);
         }
+        if (m.text && m.text.trim()) {
+          bodyHTML += `<div class="stream-part">${renderMarkdown(m.text)}</div>`;
+        }
+        shell.body.classList.add("rendered");
+        shell.body.innerHTML = bodyHTML || renderMarkdown("(empty response)");
+        enhanceRenderedContent(shell.body);
+        setCopyButtonState(shell.copyBtn, m.text || shell.body.textContent || "");
+        els.messages.appendChild(shell.root);
+      } else if (m.text && m.text.trim()) {
+        appendMessage(m.role, m.text, { scroll: false });
       }
+    }
+    if ((data.messages || []).length > 0) {
       els.messages.scrollTop = els.messages.scrollHeight;
     }
     rebuildChatNav();

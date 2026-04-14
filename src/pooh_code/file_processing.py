@@ -77,7 +77,18 @@ def _process_image(file_path: Path) -> list[dict[str, Any]]:
     data = file_path.read_bytes()
     b64 = base64.standard_b64encode(data).decode("ascii")
     mime = mimetypes.guess_type(str(file_path))[0] or "image/png"
-    return [{"type": "image", "media_type": mime, "data": b64}]
+    return [
+        {
+            "type": "text",
+            "text": f"🖼️ 图片文件: {file_path.name} ({_human_size(file_path.stat().st_size)})",
+        },
+        {
+            "type": "image",
+            "media_type": mime,
+            "data": b64,
+            "filename": file_path.name,
+        },
+    ]
 
 
 def _process_pdf(file_path: Path) -> list[dict[str, Any]]:

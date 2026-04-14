@@ -59,6 +59,33 @@ MIME_TYPES = {
     ".ico": "image/x-icon",
 }
 
+WELCOME_COMMANDS = [
+    {"name": "/help", "desc": "查看全部命令"},
+    {"name": "/new", "desc": "新建并切换会话"},
+    {"name": "/switch", "desc": "切换历史会话"},
+    {"name": "/compact", "desc": "压缩上下文"},
+    {"name": "/ctx", "desc": "查看上下文占用"},
+    {"name": "/sessions", "desc": "列出当前会话"},
+    {"name": "/skills", "desc": "查看已加载技能"},
+    {"name": "/model", "desc": "查看或切换模型"},
+    {"name": "/clear", "desc": "清空当前会话"},
+]
+
+WELCOME_TOOL_LABELS = {
+    "bash": "在 workplace 沙箱内执行 Shell 命令，适合运行脚本、查看状态和做本地验证。",
+    "read_file": "读取文件内容，可用于查看代码、配置、文档和中间产物。",
+    "write_file": "新建或覆盖文件，适合生成脚本、文档、配置和交付文件。",
+    "edit_file": "按文本替换修改文件，适合在现有实现上做精确变更。",
+    "list_dir": "查看目录结构，快速确认文件和子目录分布。",
+    "glob": "按模式查找文件，适合批量定位模块、资源和配置文件。",
+    "grep": "使用 ripgrep 搜索仓库内容，适合定位函数、字段和引用关系。",
+    "web_fetch": "已知具体 URL 时抓取网页正文，自动去掉导航和广告噪声。",
+    "web_search": "联网搜索候选结果，适合快速找资料、新闻或外部说明。",
+    "web_search_and_read": "联网搜索并自动抓取正文，适合需要深入阅读的场景。",
+    "use_skill": "加载某个 skill 的完整工作流说明，再按该技能流程执行任务。",
+    "spawn_agent": "启动受限子代理处理边界清晰的子任务，降低主上下文压力。",
+}
+
 # 文件下载支持的 MIME 类型
 DOWNLOAD_MIME_TYPES = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -132,12 +159,26 @@ def _extract_text_only(content: Any) -> str:
         return content
     if isinstance(content, list):
         chunks: list[str] = []
+        has_text_block = any(
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and str(block.get("text", "")).strip()
+            for block in content
+        )
         for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                text = str(block.get("text", ""))
-                if text:
-                    chunks.append(text)
-            elif not isinstance(block, dict):
+            if isinstance(block, dict):
+                block_type = block.get("type")
+                if block_type == "text":
+                    text = str(block.get("text", ""))
+                    if text:
+                        chunks.append(text)
+                elif block_type == "image" and not has_text_block:
+                    filename = str(block.get("filename", "")).strip()
+                    if filename:
+                        chunks.append(f"🖼️ 图片文件: {filename}")
+                    else:
+                        chunks.append("🖼️ 已上传图片")
+            else:
                 chunks.append(str(block))
         return "\n".join(chunks)
     return json.dumps(content, ensure_ascii=False, default=str)
@@ -348,6 +389,7 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         session_key = self._session_key()
         actual_session_id = session_id or agent.sessions.get_session_id(session_key)
         usage = agent.get_context_usage(session_key, session_id=actual_session_id)
+        tool_specs = agent.tools.specs()
         return {
             "session_key": session_key,
             "session_id": actual_session_id,
@@ -358,6 +400,26 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 "tokens": usage.tokens,
                 "limit": usage.limit,
                 "display": usage.display,
+            },
+            "capabilities": {
+                "commands": WELCOME_COMMANDS,
+                "tools": [
+                    {
+                        "name": spec.get("name", ""),
+                        "description": WELCOME_TOOL_LABELS.get(
+                            spec.get("name", ""),
+                            spec.get("description", ""),
+                        ),
+                    }
+                    for spec in tool_specs
+                ],
+                "skills": [
+                    {
+                        "name": skill.name,
+                        "description": skill.description or "",
+                    }
+                    for skill in agent.skills.discover()
+                ],
             },
         }
 
