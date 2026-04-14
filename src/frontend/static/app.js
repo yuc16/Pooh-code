@@ -22,6 +22,7 @@ const els = {
   usageLabel: $("#usage-label"),
   contextPill: $("#context-pill"),
   modelPill: $("#model-pill"),
+  themeToggle: $("#theme-toggle"),
   modelLabel: $("#model-label"),
   statusDot: $("#status-dot"),
   statusText: $("#status-text"),
@@ -39,6 +40,34 @@ let state = {
 const SIDEBAR_WIDTH_KEY = "pooh.sidebar.width";
 const SIDEBAR_MIN = 220;
 const SIDEBAR_MAX = 520;
+const THEME_KEY = "pooh.theme";
+
+function getPreferredTheme() {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === "light" || saved === "dark") return saved;
+  } catch (_) {}
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function updateThemeToggle(theme) {
+  if (!els.themeToggle) return;
+  const next = theme === "dark" ? "浅色" : "深色";
+  els.themeToggle.title = `切换到${next}模式`;
+  els.themeToggle.setAttribute("aria-label", `切换到${next}模式`);
+}
+
+function applyTheme(theme, { persist = true } = {}) {
+  const normalized = theme === "dark" ? "dark" : "light";
+  document.body.classList.toggle("theme-dark", normalized === "dark");
+  document.body.classList.toggle("theme-light", normalized !== "dark");
+  document.documentElement.style.colorScheme = normalized;
+  updateThemeToggle(normalized);
+  if (!persist) return;
+  try {
+    localStorage.setItem(THEME_KEY, normalized);
+  } catch (_) {}
+}
 
 function enableDragScroll(container) {
   if (!container) return;
@@ -111,6 +140,8 @@ try {
   if (savedWidth) applySidebarWidth(savedWidth);
 } catch (_) {}
 
+applyTheme(getPreferredTheme(), { persist: false });
+
 // Show/hide scroll-to-bottom button based on scroll position.
 els.messages.addEventListener("scroll", () => {
   const gap = els.messages.scrollHeight - els.messages.scrollTop - els.messages.clientHeight;
@@ -174,12 +205,12 @@ function applyState(payload) {
   }
   if (payload.session_key) state.sessionKey = payload.session_key;
   if (payload.model) {
-    els.modelPill.textContent = payload.model;
-    els.modelLabel.textContent = payload.model;
+    if (els.modelPill) els.modelPill.textContent = payload.model;
+    if (els.modelLabel) els.modelLabel.textContent = payload.model;
   }
   if (payload.usage) {
     els.usageLabel.textContent = payload.usage.display || "—";
-    els.contextPill.textContent = payload.usage.display || "--/--";
+    if (els.contextPill) els.contextPill.textContent = payload.usage.display || "--/--";
   }
   updateRunningUI();
 }
@@ -199,6 +230,132 @@ function renderInline(text) {
   return escapeHtml(text).replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
+function guessCodeLanguage(text) {
+  const sample = (text || "").trim();
+  if (!sample) return "";
+  if (/<!doctype html>|<html[\s>]|<head[\s>]|<body[\s>]/i.test(sample)) return "html";
+  if (/^\s*[\[{]/.test(sample) && /[:",\]}]/.test(sample)) return "json";
+  if (/\b(def|import|from|class|print)\b/.test(sample) && /:\s*(#.*)?$/m.test(sample)) return "python";
+  if (/\b(function|const|let|var|return|=>)\b/.test(sample)) return "javascript";
+  if (/\bSELECT\b|\bFROM\b|\bWHERE\b|\bORDER BY\b/i.test(sample)) return "sql";
+  if (/<[a-z][\w-]*[^>]*>/.test(sample)) return "html";
+  return "";
+}
+
+function looksLikeCodeBlock(text) {
+  const sample = (text || "").trim();
+  if (!sample) return false;
+  if (sample.includes("```")) return false;
+  const lines = sample.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length < 2) return false;
+  const strongPatterns = [
+    /<!doctype html>/i,
+    /<\/?[a-z][\w-]*[^>]*>/i,
+    /^\s*[{\[]/,
+    /^\s*[A-Za-z_$][\w$]*\s*=\s*.+;?$/,
+    /^\s*(const|let|var|function|class|if|for|while|return|import|export)\b/,
+    /^\s*(def|class|from|import|print)\b/,
+  ];
+  const codeLikeLines = lines.filter((line) => {
+    return strongPatterns.some((pattern) => pattern.test(line))
+      || /[{}();<>]/.test(line)
+      || /^\s*[.#][\w-]+\s*\{/.test(line);
+  }).length;
+  if (codeLikeLines >= Math.max(2, Math.ceil(lines.length * 0.45))) return true;
+  if (lines.length >= 4 && lines.some((line) => /^[<][^>]+>/.test(line))) return true;
+  return false;
+}
+
+function normalizeUserMarkdown(text) {
+  const raw = typeof text === "string" ? text : "";
+  if (!looksLikeCodeBlock(raw)) return raw;
+  const lang = guessCodeLanguage(raw);
+  const fence = `\`\`\`${lang}`;
+  return `${fence}\n${raw.trim()}\n\`\`\``;
+}
+
+function normalizeCodeText(text) {
+  let value = String(text || "").replace(/\r\n?/g, "\n");
+  value = value.replace(/^\n+|\n+$/g, "");
+  const lines = value.split("\n");
+  const indents = lines
+    .filter((line) => line.trim())
+    .map((line) => {
+      const match = line.match(/^[ \t]+/);
+      return match ? match[0].replace(/\t/g, "    ").length : 0;
+    });
+  const minIndent = indents.length ? Math.min(...indents) : 0;
+  if (minIndent > 0) {
+    value = lines
+      .map((line) => {
+        if (!line.trim()) return "";
+        let count = 0;
+        let idx = 0;
+        while (idx < line.length && count < minIndent) {
+          count += line[idx] === "\t" ? 4 : 1;
+          idx += 1;
+        }
+        return line.slice(idx);
+      })
+      .join("\n");
+  }
+  return value;
+}
+
+function resolveCodeLanguage(codeEl, text) {
+  const cls = codeEl.className || "";
+  const langMatch = cls.match(/language-([\w-]+)/i) || cls.match(/lang(?:uage)?-([\w-]+)/i);
+  const raw = (langMatch && langMatch[1] ? langMatch[1] : "").toLowerCase();
+  if (raw) {
+    if (raw === "py") return "python";
+    if (raw === "js") return "javascript";
+    if (raw === "ts") return "typescript";
+    if (raw === "htm" || raw === "xml") return "html";
+    return raw;
+  }
+  return guessCodeLanguage(text) || "plaintext";
+}
+
+function formatCodeForDisplay(text, language) {
+  const normalized = normalizeCodeText(text);
+  const lang = (language || "").toLowerCase();
+  try {
+    if (lang === "json") {
+      return JSON.stringify(JSON.parse(normalized), null, 2);
+    }
+    if (["javascript", "js", "typescript", "ts"].includes(lang) && typeof js_beautify === "function") {
+      return js_beautify(normalized, {
+        indent_size: 2,
+        space_in_empty_paren: false,
+        preserve_newlines: true,
+        max_preserve_newlines: 2,
+      });
+    }
+    if (["html", "xml"].includes(lang) && typeof html_beautify === "function") {
+      return html_beautify(normalized, {
+        indent_size: 2,
+        wrap_line_length: 0,
+        preserve_newlines: true,
+        max_preserve_newlines: 2,
+      });
+    }
+    if (lang === "python") {
+      return normalized
+        .split("\n")
+        .map((line) => line.replace(/[ \t]+$/g, "").replace(/\t/g, "    "))
+        .join("\n");
+    }
+  } catch (_) {}
+  return normalized;
+}
+
+if (typeof marked !== "undefined" && marked.setOptions) {
+  marked.setOptions({
+    gfm: true,
+    breaks: true,
+  });
+}
+
 function renderMarkdown(text) {
   if (typeof marked !== "undefined" && marked.parse) {
     try {
@@ -216,20 +373,139 @@ function hideEmptyHint() {
 
 let _msgIndex = 0;
 
-function appendMessage(role, text, { scroll = true } = {}) {
+function setCopyButtonState(button, text) {
+  if (!button) return;
+  const value = typeof text === "string" ? text : "";
+  button.dataset.copyText = value;
+  button.disabled = !value.trim();
+}
+
+async function copyToClipboard(text) {
+  if (!text) return false;
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  const ghost = document.createElement("textarea");
+  ghost.value = text;
+  ghost.setAttribute("readonly", "readonly");
+  ghost.style.position = "fixed";
+  ghost.style.opacity = "0";
+  ghost.style.pointerEvents = "none";
+  document.body.appendChild(ghost);
+  ghost.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } finally {
+    ghost.remove();
+  }
+  return ok;
+}
+
+function attachCopyHandler(button) {
+  if (!button || button.dataset.boundCopy === "1") return;
+  button.dataset.boundCopy = "1";
+  button.addEventListener("click", async () => {
+    const text = button.dataset.copyText || "";
+    if (!text.trim()) return;
+    try {
+      await copyToClipboard(text);
+      const original = button.textContent;
+      button.textContent = "已复制";
+      button.classList.add("copied");
+      window.setTimeout(() => {
+        button.textContent = original;
+        button.classList.remove("copied");
+      }, 1200);
+    } catch (_) {
+      button.textContent = "复制失败";
+      button.classList.add("copied");
+      window.setTimeout(() => {
+        button.textContent = "复制";
+        button.classList.remove("copied");
+      }, 1200);
+    }
+  });
+}
+
+function enhanceRenderedContent(container) {
+  if (!container) return;
+  container.querySelectorAll("pre").forEach((pre) => {
+    if (pre.parentElement?.classList.contains("code-block")) return;
+    const codeEl = pre.querySelector("code") || pre;
+    const originalText = codeEl.textContent || "";
+    const language = resolveCodeLanguage(codeEl, originalText);
+    const formatted = formatCodeForDisplay(originalText, language);
+    codeEl.textContent = formatted;
+    pre.dataset.language = language;
+    if (codeEl !== pre) {
+      codeEl.className = `language-${language}`;
+    }
+    const wrapper = document.createElement("div");
+    wrapper.className = "code-block";
+    const toolbar = document.createElement("div");
+    toolbar.className = "code-block-toolbar";
+    const langLabel = document.createElement("span");
+    langLabel.className = "code-lang";
+    langLabel.textContent = language === "plaintext" ? "CODE" : language.toUpperCase();
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "code-copy";
+    btn.textContent = "复制代码";
+    setCopyButtonState(btn, formatted);
+    attachCopyHandler(btn);
+    toolbar.appendChild(langLabel);
+    toolbar.appendChild(btn);
+    pre.parentNode.insertBefore(wrapper, pre);
+    wrapper.appendChild(toolbar);
+    wrapper.appendChild(pre);
+    if (typeof hljs !== "undefined" && typeof hljs.highlightElement === "function") {
+      try {
+        hljs.highlightElement(codeEl);
+      } catch (_) {}
+    }
+  });
+}
+
+function createMessageShell(role, { navId = null } = {}) {
   hideEmptyHint();
-  const div = document.createElement("div");
-  div.className = `msg ${role}`;
+  const root = document.createElement("div");
+  root.className = `msg ${role}`;
+  if (navId) {
+    root.setAttribute("data-nav-id", navId);
+  }
   const roleLabel = role === "user" ? "YOU" : role === "assistant" ? "POOH" : "SYS";
-  if (role === "assistant") {
-    div.innerHTML = `<span class="role">${roleLabel}</span><div class="body rendered">${renderMarkdown(text)}</div>`;
+  const canCopy = role === "user" || role === "assistant";
+  root.innerHTML =
+    `<div class="msg-meta">` +
+      `<span class="role">${roleLabel}</span>` +
+      `${canCopy ? '<button class="msg-copy" type="button" aria-label="复制消息">复制</button>' : ""}` +
+    `</div>` +
+    `<div class="body${role === "user" ? " rendered" : ""}"></div>`;
+  const body = root.querySelector(".body");
+  const copyBtn = root.querySelector(".msg-copy");
+  if (copyBtn) {
+    setCopyButtonState(copyBtn, "");
+    attachCopyHandler(copyBtn);
+  }
+  return { root, body, copyBtn };
+}
+
+function appendMessage(role, text, { scroll = true } = {}) {
+  const shell = createMessageShell(role, {
+    navId: role === "user" ? `msg-${_msgIndex++}` : null,
+  });
+  if (role === "assistant" || role === "user") {
+    const renderedText = role === "user" ? normalizeUserMarkdown(text) : text;
+    shell.body.classList.add("rendered");
+    shell.body.innerHTML = renderMarkdown(renderedText);
+    enhanceRenderedContent(shell.body);
+    setCopyButtonState(shell.copyBtn, text);
   } else {
-    div.innerHTML = `<span class="role">${roleLabel}</span><div class="body">${renderInline(text)}</div>`;
+    shell.body.innerHTML = renderInline(text);
   }
-  if (role === "user") {
-    div.setAttribute("data-nav-id", `msg-${_msgIndex++}`);
-  }
-  els.messages.appendChild(div);
+  els.messages.appendChild(shell.root);
   if (scroll) els.messages.scrollTop = els.messages.scrollHeight;
 }
 
@@ -313,9 +589,7 @@ async function refreshMessages() {
     } else {
       for (const m of data.messages) {
         if (m.role === "assistant") {
-          hideEmptyHint();
-          const div = document.createElement("div");
-          div.className = "msg assistant";
+          const shell = createMessageShell("assistant");
           let bodyHTML = "";
           if (m.tools && m.tools.length) {
             bodyHTML += buildToolGroupHTML(m.tools);
@@ -323,8 +597,11 @@ async function refreshMessages() {
           if (m.text && m.text.trim()) {
             bodyHTML += `<div class="stream-part">${renderMarkdown(m.text)}</div>`;
           }
-          div.innerHTML = `<span class="role">POOH</span><div class="body rendered">${bodyHTML || "(empty response)"}</div>`;
-          els.messages.appendChild(div);
+          shell.body.classList.add("rendered");
+          shell.body.innerHTML = bodyHTML || renderMarkdown("(empty response)");
+          enhanceRenderedContent(shell.body);
+          setCopyButtonState(shell.copyBtn, m.text || shell.body.textContent || "");
+          els.messages.appendChild(shell.root);
         } else if (m.text && m.text.trim()) {
           appendMessage(m.role, m.text, { scroll: false });
         }
@@ -467,15 +744,13 @@ async function deleteSession(sessionId) {
 
 // ---------- streaming assistant bubble ----------
 function createAssistantBubble() {
-  hideEmptyHint();
-  const div = document.createElement("div");
-  div.className = "msg assistant";
-  div.innerHTML = `<span class="role">POOH</span><div class="body"></div>`;
-  els.messages.appendChild(div);
+  const shell = createMessageShell("assistant");
+  els.messages.appendChild(shell.root);
   els.messages.scrollTop = els.messages.scrollHeight;
   return {
-    root: div,
-    body: div.querySelector(".body"),
+    root: shell.root,
+    body: shell.body,
+    copyBtn: shell.copyBtn,
     currentText: null, // active text stream-part being appended to
     textParts: [],     // [{el, raw}] — accumulate raw text per segment for markdown rendering
     toolBlocks: {},    // call_id -> element
@@ -528,6 +803,10 @@ function appendTextDelta(bubble, delta) {
     bubble.textParts.push({ el: span, raw: "" });
   }
   bubble.textParts[bubble.textParts.length - 1].raw += delta;
+  setCopyButtonState(
+    bubble.copyBtn,
+    bubble.textParts.map((part) => part.raw).join("\n\n"),
+  );
   bubble.currentText.appendChild(document.createTextNode(delta));
   ensureCursor(bubble);
   autoScrollIfNear();
@@ -870,12 +1149,18 @@ async function streamChat(text, files = []) {
           const trimmed = part.raw.trim();
           if (trimmed) {
             part.el.innerHTML = renderMarkdown(trimmed);
+            enhanceRenderedContent(part.el);
           }
         }
         bubble.body.classList.add("rendered");
         if (!bubble.body.textContent.trim()) {
           bubble.body.innerHTML = renderMarkdown(evt.text || "(empty response)");
+          enhanceRenderedContent(bubble.body);
         }
+        setCopyButtonState(
+          bubble.copyBtn,
+          bubble.textParts.map((part) => part.raw).join("\n\n") || evt.text || "",
+        );
         // 将累积的下载按钮追加到气泡末尾
         if (bubble._pendingDownloads && bubble._pendingDownloads.length) {
           const dlContainer = document.createElement("div");
@@ -1235,6 +1520,11 @@ document.getElementById("nav-toggle").addEventListener("click", () => {
   nav.classList.toggle("collapsed");
   const btn = document.getElementById("nav-toggle");
   btn.textContent = nav.classList.contains("collapsed") ? "‹" : "›";
+});
+
+els.themeToggle?.addEventListener("click", () => {
+  const nextTheme = document.body.classList.contains("theme-dark") ? "light" : "dark";
+  applyTheme(nextTheme);
 });
 
 document.querySelectorAll(".chip[data-cmd]").forEach((chip) => {
