@@ -60,6 +60,20 @@
         </div>
       </header>
 
+      <div class="agent-status" id="agent-status" data-level="idle">
+        <div class="agent-status-indicator" aria-hidden="true">
+          <span class="agent-status-spinner"></span>
+        </div>
+        <div class="agent-status-body">
+          <div class="agent-status-title" id="agent-status-title">就绪</div>
+          <div class="agent-status-detail" id="agent-status-detail">等待你的指令</div>
+        </div>
+        <div class="agent-status-meta">
+          <span class="agent-status-timer" id="agent-status-timer"></span>
+          <button class="agent-status-close" id="agent-status-close" type="button" title="收起状态栏" aria-label="收起状态栏">×</button>
+        </div>
+      </div>
+
       <div class="content-row">
         <div class="messages-wrapper">
           <section class="messages" id="messages">

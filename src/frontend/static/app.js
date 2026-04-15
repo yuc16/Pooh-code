@@ -26,7 +26,108 @@ const els = {
   modelLabel: $("#model-label"),
   statusDot: $("#status-dot"),
   statusText: $("#status-text"),
+  agentStatus: $("#agent-status"),
+  agentStatusTitle: $("#agent-status-title"),
+  agentStatusDetail: $("#agent-status-detail"),
+  agentStatusTimer: $("#agent-status-timer"),
+  agentStatusClose: $("#agent-status-close"),
 };
+
+// ───────── 主页面 Agent 状态面板 ─────────
+const agentStatus = (() => {
+  let level = "idle";
+  let startTs = 0;
+  let timerHandle = null;
+  let hidden = false;
+  let lastActivity = 0;
+  let baseDetail = "";
+
+  function render() {
+    if (!els.agentStatus) return;
+    els.agentStatus.dataset.level = level;
+    els.agentStatus.classList.toggle("hidden", hidden && level === "idle");
+  }
+
+  function fmtElapsed(ms) {
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s}s`;
+    return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
+  }
+
+  function tick() {
+    if (!els.agentStatusTimer) return;
+    if (level === "idle" || !startTs) {
+      els.agentStatusTimer.textContent = "";
+      return;
+    }
+    els.agentStatusTimer.textContent = fmtElapsed(Date.now() - startTs);
+    // 超过 8 秒没新事件：在详情里追加实时的"X 秒无进展"，并随时间刷新。
+    if (els.agentStatusDetail && lastActivity) {
+      const idleMs = Date.now() - lastActivity;
+      if (idleMs > 8000) {
+        els.agentStatusDetail.textContent =
+          (baseDetail ? baseDetail + " · " : "") + `${fmtElapsed(idleMs)} 内容参数构造中，时间较长，请耐心等待`;
+      } else if (baseDetail) {
+        els.agentStatusDetail.textContent = baseDetail;
+      }
+    }
+  }
+
+  function startTimer() {
+    stopTimer();
+    startTs = Date.now();
+    tick();
+    timerHandle = window.setInterval(tick, 1000);
+  }
+
+  function stopTimer() {
+    if (timerHandle) window.clearInterval(timerHandle);
+    timerHandle = null;
+  }
+
+  function markActivity() {
+    lastActivity = Date.now();
+  }
+
+  function setTitle(text) {
+    if (els.agentStatusTitle) els.agentStatusTitle.textContent = text;
+  }
+  function setDetail(text) {
+    if (els.agentStatusDetail) els.agentStatusDetail.textContent = text;
+  }
+
+  function set(newLevel, title, detail) {
+    level = newLevel || "idle";
+    if (title != null) setTitle(title);
+    if (detail != null) {
+      baseDetail = detail;
+      setDetail(detail);
+    }
+    if (level === "idle") {
+      stopTimer();
+      if (els.agentStatusTimer) els.agentStatusTimer.textContent = "";
+    } else if (!timerHandle) {
+      startTimer();
+    }
+    markActivity();
+    render();
+  }
+
+  function reset() {
+    hidden = false;
+    set("idle", "就绪", "等待你的指令");
+  }
+
+  els.agentStatusClose?.addEventListener("click", () => {
+    hidden = true;
+    render();
+  });
+
+  // idle 时也保留可见（让用户看到"就绪"）
+  render();
+
+  return { set, reset, markActivity, setDetail };
+})();
 
 const scrollBtn = document.getElementById("scroll-btn");
 
@@ -52,7 +153,7 @@ function getPreferredTheme() {
   try {
     const saved = localStorage.getItem(THEME_KEY);
     if (saved === "light" || saved === "dark") return saved;
-  } catch (_) {}
+  } catch (_) { }
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
@@ -72,7 +173,7 @@ function applyTheme(theme, { persist = true } = {}) {
   if (!persist) return;
   try {
     localStorage.setItem(THEME_KEY, normalized);
-  } catch (_) {}
+  } catch (_) { }
 }
 
 function enableDragScroll(container) {
@@ -138,13 +239,13 @@ function applySidebarWidth(width) {
   document.documentElement.style.setProperty("--sidebar-width", `${clamped}px`);
   try {
     localStorage.setItem(SIDEBAR_WIDTH_KEY, String(clamped));
-  } catch (_) {}
+  } catch (_) { }
 }
 
 try {
   const savedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY) || 0);
   if (savedWidth) applySidebarWidth(savedWidth);
-} catch (_) {}
+} catch (_) { }
 
 applyTheme(getPreferredTheme(), { persist: false });
 
@@ -203,9 +304,11 @@ function updateRunningUI() {
   }
   if (state.runningSessions.size > 0) {
     setStatus("busy", `后台运行 ${state.runningSessions.size} 个会话`);
+    if (agentStatus) agentStatus.set("busy", "后台会话运行中", `仍有 ${state.runningSessions.size} 个会话在后台处理中`);
     return;
   }
   setStatus("ok", "就绪");
+  if (agentStatus) agentStatus.set("idle", "就绪", "等待你的指令");
 }
 
 function renderWelcomePanel() {
@@ -216,9 +319,9 @@ function renderWelcomePanel() {
   const skills = Array.isArray(caps.skills) ? caps.skills : [];
   const commandHtml = commands.length
     ? commands.map((item) => {
-        const name = escapeHtml(item.name || "");
-        const desc = escapeHtml(item.desc || "");
-        return `
+      const name = escapeHtml(item.name || "");
+      const desc = escapeHtml(item.desc || "");
+      return `
           <details class="empty-item empty-item-command">
             <summary class="empty-item-summary">
               <span class="empty-item-name" title="${name}">${name}</span>
@@ -230,12 +333,12 @@ function renderWelcomePanel() {
             </div>
           </details>
         `;
-      }).join("")
+    }).join("")
     : `<div class="empty-note">当前未返回命令列表</div>`;
   const toolHtml = tools.length
     ? tools.map((tool) => {
-        const desc = escapeHtml(tool.description || "");
-        return `
+      const desc = escapeHtml(tool.description || "");
+      return `
           <details class="empty-item empty-item-tool">
             <summary class="empty-item-summary">
               <span class="empty-item-name" title="${escapeHtml(tool.name || "")}">${escapeHtml(tool.name || "")}</span>
@@ -246,13 +349,13 @@ function renderWelcomePanel() {
             </div>
           </details>
         `;
-      }).join("")
+    }).join("")
     : `<div class="empty-note">当前未返回工具列表</div>`;
   const skillHtml = skills.length
     ? skills.map((skill) => {
-        const name = escapeHtml(skill?.name || "");
-        const desc = escapeHtml(skill?.description || "当前技能未提供描述。");
-        return `
+      const name = escapeHtml(skill?.name || "");
+      const desc = escapeHtml(skill?.description || "当前技能未提供描述。");
+      return `
           <details class="empty-item empty-item-skill">
             <summary class="empty-item-summary">
               <span class="empty-item-name empty-skill-copy" title="${name}" data-copy-skill="${name}" role="button" tabindex="0">${name}</span>
@@ -263,7 +366,7 @@ function renderWelcomePanel() {
             </div>
           </details>
         `;
-      }).join("")
+    }).join("")
     : `<div class="empty-note">当前没有已加载技能</div>`;
 
   els.emptyHint.innerHTML = `
@@ -342,7 +445,7 @@ function renderWelcomePanel() {
         window.setTimeout(() => {
           node.textContent = original;
         }, 1200);
-      } catch (_) {}
+      } catch (_) { }
     };
     node.addEventListener("click", copySkillName);
     node.addEventListener("keydown", (e) => {
@@ -516,7 +619,7 @@ function formatCodeForDisplay(text, language) {
         .map((line) => line.replace(/[ \t]+$/g, "").replace(/\t/g, "    "))
         .join("\n");
     }
-  } catch (_) {}
+  } catch (_) { }
   return normalized;
 }
 
@@ -531,7 +634,7 @@ function renderMarkdown(text) {
   if (typeof marked !== "undefined" && marked.parse) {
     try {
       return marked.parse(text);
-    } catch (_) {}
+    } catch (_) { }
   }
   return renderInline(text);
 }
@@ -628,7 +731,7 @@ function enhanceRenderedContent(container) {
     if (typeof hljs !== "undefined" && typeof hljs.highlightElement === "function") {
       try {
         hljs.highlightElement(codeEl);
-      } catch (_) {}
+      } catch (_) { }
     }
   });
 }
@@ -643,8 +746,8 @@ function createMessageShell(role, { navId = null } = {}) {
   const canCopy = role === "user" || role === "assistant";
   root.innerHTML =
     `<div class="msg-meta">` +
-      `<span class="role">${roleLabel}</span>` +
-      `${canCopy ? '<button class="msg-copy" type="button" aria-label="复制消息">复制</button>' : ""}` +
+    `<span class="role">${roleLabel}</span>` +
+    `${canCopy ? '<button class="msg-copy" type="button" aria-label="复制消息">复制</button>' : ""}` +
     `</div>` +
     `<div class="body${role === "user" ? " rendered" : ""}"></div>`;
   const body = root.querySelector(".body");
@@ -944,7 +1047,7 @@ function finalizeToolGroup(bubble) {
     group._finalized = true;
     const n = group._toolCount || 0;
     group.querySelector(".thinking-icon").textContent = "⊙";
-    group.querySelector(".thinking-label").textContent = `已思考`;
+    group.querySelector(".thinking-label").textContent = `工具调用完毕`;
     group.querySelector(".thinking-count").textContent =
       n > 1 ? ` · ${n} 个工具调用` : n === 1 ? ` · 1 个工具调用` : "";
   }
@@ -1008,7 +1111,7 @@ function addToolBlock(bubble, { call_id, name }) {
     group.innerHTML = `
       <div class="thinking-head">
         <span class="thinking-icon">⊘</span>
-        <span class="thinking-label">思考中…</span>
+        <span class="thinking-label">调用工具中</span>
         <span class="thinking-count"></span>
         <span class="caret">▾</span>
       </div>
@@ -1235,6 +1338,8 @@ async function streamChat(text, files = []) {
   const bubble = createAssistantBubble();
   ensureCursor(bubble);
 
+  agentStatus.set("busy", "提交请求中", `正在发送消息到 Agent${files.length ? `（含 ${files.length} 个附件）` : ""}`);
+
   const payload = { text, session_id: launchedSessionId };
   if (files && files.length) payload.files = files;
   const resp = await fetch("/api/chat/stream", {
@@ -1253,28 +1358,36 @@ async function streamChat(text, files = []) {
 
   const handle = (evt) => {
     if (!evt || !evt.type) return;
+    agentStatus.markActivity();
     switch (evt.type) {
       case "text_delta":
         appendTextDelta(bubble, evt.text || "");
+        agentStatus.set("streaming", "生成回复中", "模型正在输出最终回答…");
         break;
       case "reasoning_delta":
         appendReasoningDelta(bubble, evt.text || "");
+        agentStatus.set("thinking", "思考中", "模型正在进行推理（reasoning）…");
         break;
       case "reasoning_part_added":
         startReasoningPart(bubble);
+        agentStatus.set("thinking", "思考中", "开始新的推理片段…");
         break;
       case "reasoning_part_done":
         break;
       case "tool_use_started":
         addToolBlock(bubble, { call_id: evt.call_id, name: evt.name });
+        agentStatus.set("tool", `调用工具: ${evt.name || "unknown"}`, "模型正在构造工具调用参数…");
         break;
       case "tool_use_done":
         finalizeToolInput(bubble, evt);
+        agentStatus.set("tool", `执行工具: ${evt.name || "unknown"}`, "等待工具返回结果…");
         break;
       case "tool_result":
         attachToolResult(bubble, evt);
+        agentStatus.set("busy", "工具已返回", "继续交由模型处理结果…");
         break;
       case "turn_start":
+        agentStatus.set("busy", `第 ${evt.turn || 1} 轮`, "开始新一轮 LLM 推理…");
         // subtle divider between turns
         if (evt.turn && evt.turn > 1) {
           removeCursor(bubble);
@@ -1287,11 +1400,13 @@ async function streamChat(text, files = []) {
         }
         break;
       case "compacted":
+        agentStatus.set("busy", "上下文已压缩", `autocompact → ${evt.display || ""}`);
         if (state.sessionId === launchedSessionId) {
           appendMessage("system", `[autocompact -> ${evt.display || ""}]`);
         }
         break;
       case "truncated":
+        agentStatus.set("error", "已截断", `已达到 max_turns=${evt.max_turns} 上限`);
         if (state.sessionId === launchedSessionId) {
           appendMessage(
             "system",
@@ -1301,12 +1416,14 @@ async function streamChat(text, files = []) {
         break;
       case "cancelled":
         setSessionRunning(launchedSessionId, false);
+        agentStatus.set("idle", "已取消", "当前会话被用户取消");
         if (state.sessionId === launchedSessionId) {
           appendMessage("system", "当前会话已请求取消。");
         }
         break;
       case "done":
         setSessionRunning(launchedSessionId, false);
+        agentStatus.set("idle", "完成", "回答已返回");
         removeCursor(bubble);
         finalizeToolGroup(bubble);
         // 把每段原始文本用 markdown 渲染替换
@@ -1349,6 +1466,7 @@ async function streamChat(text, files = []) {
         break;
       case "error":
         setSessionRunning(launchedSessionId, false);
+        agentStatus.set("error", "发生错误", evt.error || "未知错误");
         removeCursor(bubble);
         if (state.sessionId === launchedSessionId) {
           appendMessage("system", `请求失败: ${evt.error || "unknown"}`);
@@ -1391,8 +1509,22 @@ async function streamChat(text, files = []) {
     }
   } finally {
     // 主动 cancel 释放底层 socket，不再等待服务端关闭连接。
-    try { await reader.cancel(); } catch (_) {}
+    try { await reader.cancel(); } catch (_) { }
     removeCursor(bubble);
+    // 即便流提前结束（未收到 done 事件）也要把"思考中"落定为"已思考"，并渲染已收到的文本。
+    finalizeToolGroup(bubble);
+    if (!finished) {
+      for (const part of bubble.textParts) {
+        const trimmed = part.raw.trim();
+        if (trimmed) {
+          part.el.innerHTML = renderMarkdown(trimmed);
+          enhanceRenderedContent(part.el);
+        }
+      }
+      bubble.body.classList.add("rendered");
+      setSessionRunning(launchedSessionId, false);
+      agentStatus.set("idle", "连接已结束", "流式响应提前终止，已显示已接收的内容");
+    }
   }
 }
 
@@ -1410,6 +1542,7 @@ async function sendMessage(text) {
   // Slash commands: run through /api/command and surface the output.
   if (text.startsWith("/")) {
     setBusy(true, launchedSessionId);
+    agentStatus.set("busy", `执行命令 ${text}`, "调用后端命令处理器…");
     try {
       const data = await api("/api/command", {
         method: "POST",
@@ -1424,9 +1557,19 @@ async function sendMessage(text) {
         appendMessage("system", data.text);
       }
       await Promise.all([refreshSessions(), refreshFiles()]);
+      agentStatus.set("idle", "命令完成", `${text} 已执行`);
     } catch (err) {
-      appendMessage("system", `命令错误: ${err.message}`);
-      setStatus("err", err.message);
+      const msg = err.message || "unknown";
+      const isRunning = /session is running|running/i.test(msg);
+      appendMessage("system", `命令错误: ${msg}`);
+      setStatus("err", msg);
+      agentStatus.set(
+        "error",
+        isRunning ? `无法执行 ${text}` : `命令失败`,
+        isRunning
+          ? "当前会话仍在运行中。请先点击「停止」或等待本轮完成后再执行命令。"
+          : msg,
+      );
     } finally {
       setBusy(false, launchedSessionId);
     }
@@ -1439,12 +1582,14 @@ async function sendMessage(text) {
   appendMessage("user", displayText);
   rebuildChatNav();
   setSessionRunning(launchedSessionId, true);
+  agentStatus.set("busy", "已提交消息", "正在建立到 Agent 的流式连接…");
   try {
     await streamChat(text, filePaths);
     await Promise.all([refreshSessions(), refreshFiles()]);
   } catch (err) {
     appendMessage("system", `请求失败: ${err.message}`);
     setStatus("err", err.message);
+    agentStatus.set("error", "请求失败", err.message || "unknown");
   } finally {
     setSessionRunning(launchedSessionId, false);
   }
