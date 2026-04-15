@@ -20,6 +20,8 @@ const els = {
   filesSummary: $("#files-summary"),
   sessionId: $("#session-id"),
   usageLabel: $("#usage-label"),
+  userEmail: $("#user-email"),
+  btnLogout: $("#btn-logout"),
   contextPill: $("#context-pill"),
   modelPill: $("#model-pill"),
   themeToggle: $("#theme-toggle"),
@@ -786,12 +788,24 @@ async function api(path, opts = {}) {
     method: opts.method || "GET",
     headers: opts.body ? { "Content-Type": "application/json" } : undefined,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
+    credentials: "same-origin",
   });
+  if (resp.status === 401) {
+    window.location.href = "/login";
+    throw new Error("未登录");
+  }
   const data = await resp.json().catch(() => ({ ok: false, error: "invalid json" }));
   if (!resp.ok || !data.ok) {
     throw new Error(data.error || `HTTP ${resp.status}`);
   }
   return data;
+}
+
+async function logout() {
+  try {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+  } catch (_) {}
+  window.location.href = "/login";
 }
 
 function buildToolGroupHTML(tools) {
@@ -1784,6 +1798,7 @@ function autosize() {
 }
 els.input.addEventListener("input", autosize);
 
+els.btnLogout?.addEventListener("click", logout);
 els.btnNew.addEventListener("click", newSession);
 els.btnRefresh.addEventListener("click", () => {
   refreshMessages();
@@ -1846,6 +1861,13 @@ document.querySelectorAll(".chip[data-cmd]").forEach((chip) => {
 // ---------- boot ----------
 (async () => {
   setStatus("ok", "连接中…");
+  try {
+    const me = await api("/api/auth/me");
+    if (me.user && els.userEmail) els.userEmail.textContent = me.user.email;
+  } catch (_) {
+    // api() 已在 401 时跳登录页
+    return;
+  }
   try {
     const data = await api("/api/state");
     applyState(data);

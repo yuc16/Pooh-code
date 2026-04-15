@@ -653,6 +653,30 @@ body.sidebar-collapsed .sidebar-resizer {
   color: var(--fg);
 }
 
+.meta-row.auth-row {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border-soft);
+  align-items: center;
+}
+.meta-row.auth-row #user-email {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 70%;
+}
+.btn-logout {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.btn-logout:hover { background: rgba(220,38,38,0.1); color: #dc2626; border-color: #dc2626; }
+
 /* ---------- main ---------- */
 .main {
   grid-column: 3;

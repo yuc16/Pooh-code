@@ -33,6 +33,7 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from pooh_code.agent import PoohAgent  # noqa: E402
+from pooh_code.auth_db import AuthError, User, get_store  # noqa: E402
 from pooh_code.commands import CommandProcessor  # noqa: E402
 from pooh_code.config import load_settings  # noqa: E402
 from pooh_code.output_files import (  # noqa: E402
@@ -46,8 +47,12 @@ from pooh_code.output_files import (  # noqa: E402
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "workplace" / "uploads"
 WEB_CHANNEL = "web"
-WEB_ACCOUNT = "local"
-WEB_PEER = "web-user"
+WEB_ACCOUNT = "user"  # 固定前缀；真正的隔离来自 user_id
+AUTH_COOKIE = "pooh_token"
+AUTH_EXEMPT_PATHS = {
+    "/", "/index.html", "/login", "/login.html",
+    "/api/auth/login", "/api/auth/register", "/api/auth/me", "/api/auth/logout",
+}
 
 MIME_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -294,7 +299,49 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         return parsed
 
     def _session_key(self) -> str:
-        return self.server.agent.build_session_key(WEB_CHANNEL, WEB_ACCOUNT, WEB_PEER)
+        user = getattr(self, "user", None)
+        if user is None:
+            raise PermissionError("unauthenticated")
+        return self.server.agent.build_session_key(WEB_CHANNEL, WEB_ACCOUNT, f"u{user.id}")
+
+    # ---------- auth helpers ----------
+    def _read_cookie(self, name: str) -> str | None:
+        raw = self.headers.get("Cookie") or ""
+        for part in raw.split(";"):
+            part = part.strip()
+            if not part or "=" not in part:
+                continue
+            k, v = part.split("=", 1)
+            if k.strip() == name:
+                return v.strip()
+        return None
+
+    def _resolve_user(self) -> User | None:
+        token = self._read_cookie(AUTH_COOKIE)
+        return get_store().resolve_token(token) if token else None
+
+    def _require_auth(self, path: str) -> bool:
+        """返回 True 表示通过鉴权；False 表示已发送 401/重定向响应。"""
+        if path in AUTH_EXEMPT_PATHS or path.startswith("/static/"):
+            return True
+        user = self._resolve_user()
+        if user is None:
+            self._send_error_json(401, "unauthenticated")
+            return False
+        self.user = user
+        return True
+
+    def _set_auth_cookie(self, token: str, ttl: int = 30 * 24 * 3600) -> None:
+        self.send_header(
+            "Set-Cookie",
+            f"{AUTH_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age={ttl}",
+        )
+
+    def _clear_auth_cookie(self) -> None:
+        self.send_header(
+            "Set-Cookie",
+            f"{AUTH_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+        )
 
     def _session_id_from_query(self, parsed: Any) -> str | None:
         qs = parse_qs(parsed.query)
@@ -303,13 +350,23 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
 
     def _session_id_from_body(self, body: dict[str, Any], session_key: str) -> str:
         raw = str(body.get("session_id", "")).strip()
-        return raw or self.server.agent.sessions.get_session_id(session_key)
+        resolved = raw or self.server.agent.sessions.get_session_id(session_key)
+        if raw:
+            # 防止越权：必须是当前用户 session_key 下的 session_id
+            owned = {it.get("session_id") for it in self.server.agent.sessions.list_sessions(session_key=session_key)}
+            if resolved not in owned:
+                raise PermissionError("session_id does not belong to current user")
+        return resolved
 
     # ---------- routing ----------
     def do_GET(self) -> None:  # noqa: N802
         try:
             parsed = urlparse(self.path)
             path = parsed.path
+            if not self._require_auth(path):
+                return
+            if path == "/api/auth/me":
+                return self._handle_auth_me()
             if path == "/api/state":
                 return self._handle_state()
             if path == "/api/messages":
@@ -320,11 +377,21 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 return self._handle_files()
             if path == "/api/download":
                 return self._handle_download(parsed)
+            if path == "/login" or path == "/login.html":
+                return self._serve_static("login.html")
             if path == "/" or path == "/index.html":
+                # 未登录：重定向到登录页
+                if self._resolve_user() is None:
+                    self.send_response(302)
+                    self.send_header("Location", "/login")
+                    self.end_headers()
+                    return
                 return self._serve_static("index.html")
             if path.startswith("/static/"):
                 return self._serve_static(path[len("/static/") :])
             self._send_error_json(404, f"not found: {path}")
+        except PermissionError as exc:
+            self._send_error_json(403, str(exc))
         except ValueError as exc:
             self._send_error_json(400, str(exc))
         except Exception as exc:
@@ -335,6 +402,14 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         try:
             parsed = urlparse(self.path)
             path = parsed.path
+            if path == "/api/auth/register":
+                return self._handle_auth_register()
+            if path == "/api/auth/login":
+                return self._handle_auth_login()
+            if path == "/api/auth/logout":
+                return self._handle_auth_logout()
+            if not self._require_auth(path):
+                return
             if path == "/api/upload":
                 return self._handle_upload()
             if path == "/api/chat":
@@ -358,6 +433,8 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
             if path == "/api/session/compact":
                 return self._handle_compact_session()
             self._send_error_json(404, f"not found: {path}")
+        except PermissionError as exc:
+            self._send_error_json(403, str(exc))
         except ValueError as exc:
             self._send_error_json(400, str(exc))
         except Exception as exc:
@@ -422,6 +499,67 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 ],
             },
         }
+
+    # ---------- auth handlers ----------
+    def _handle_auth_register(self) -> None:
+        body = self._read_json_body()
+        email = str(body.get("email", ""))
+        password = str(body.get("password", ""))
+        try:
+            user = get_store().register(email, password)
+            token = get_store().issue_token(user.id, ua=self.headers.get("User-Agent"))
+        except AuthError as exc:
+            return self._send_error_json(400, str(exc))
+        body_out = json.dumps(
+            {"ok": True, "user": {"id": user.id, "email": user.email}},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body_out)))
+        self.send_header("Cache-Control", "no-store")
+        self._set_auth_cookie(token)
+        self.end_headers()
+        self.wfile.write(body_out)
+
+    def _handle_auth_login(self) -> None:
+        body = self._read_json_body()
+        email = str(body.get("email", ""))
+        password = str(body.get("password", ""))
+        try:
+            user = get_store().login(email, password)
+            token = get_store().issue_token(user.id, ua=self.headers.get("User-Agent"))
+        except AuthError as exc:
+            return self._send_error_json(401, str(exc))
+        body_out = json.dumps(
+            {"ok": True, "user": {"id": user.id, "email": user.email}},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body_out)))
+        self.send_header("Cache-Control", "no-store")
+        self._set_auth_cookie(token)
+        self.end_headers()
+        self.wfile.write(body_out)
+
+    def _handle_auth_logout(self) -> None:
+        token = self._read_cookie(AUTH_COOKIE)
+        if token:
+            get_store().revoke_token(token)
+        body_out = b'{"ok": true}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body_out)))
+        self._clear_auth_cookie()
+        self.end_headers()
+        self.wfile.write(body_out)
+
+    def _handle_auth_me(self) -> None:
+        user = getattr(self, "user", None) or self._resolve_user()
+        if user is None:
+            return self._send_error_json(401, "unauthenticated")
+        self._send_json({"ok": True, "user": {"id": user.id, "email": user.email}})
 
     def _handle_state(self) -> None:
         parsed = urlparse(self.path)
@@ -664,37 +802,51 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         cancelled = self.server.runs.cancel(session_id)
         self._send_json({"ok": True, "session_id": session_id, "cancelled": cancelled, **self._state_payload(session_id)})
 
-    def _handle_files(self) -> None:
-        """列出 workplace/output/ 中的文件，支持浏览和下载。"""
-        groups = group_output_files_by_session()
-        # 为每个 group 补上 session label
+    def _owned_session_ids(self) -> set[str]:
         session_key = self._session_key()
+        try:
+            return {
+                item["session_id"]
+                for item in self.server.agent.sessions.list_sessions(session_key=session_key)
+            }
+        except Exception:
+            return set()
+
+    def _handle_files(self) -> None:
+        """列出 workplace/output/ 中的文件；只返回当前用户拥有的 session 对应的分组。"""
+        session_key = self._session_key()
+        owned_ids = self._owned_session_ids()
         session_labels = {}
         try:
             for item in self.server.agent.sessions.list_sessions(session_key=session_key):
                 session_labels[item["session_id"]] = item.get("label", "")
         except Exception:
             pass
+        groups = [g for g in group_output_files_by_session() if g.get("session_id") in owned_ids]
         for group in groups:
             group["label"] = session_labels.get(group["session_id"], "")
+        # deliverable_files 只保留落在用户自己 session 目录下的
+        deliverables = []
+        for f in iter_deliverable_files():
+            rel = f.relative_to(OUTPUT_DIR)
+            sid = rel.parts[0] if rel.parts else ""
+            if sid in owned_ids:
+                deliverables.append({
+                    "path": str(rel),
+                    "name": f.name,
+                    "suffix": f.suffix.lower(),
+                })
         self._send_json(
             {
                 "ok": True,
                 "groups": groups,
-                "deliverable_files": [
-                    {
-                        "path": str(f.relative_to(OUTPUT_DIR)),
-                        "name": f.name,
-                        "suffix": f.suffix.lower(),
-                    }
-                    for f in iter_deliverable_files()
-                ],
+                "deliverable_files": deliverables,
                 **self._state_payload(),
             }
         )
 
     def _handle_download(self, parsed: Any) -> None:
-        """下载 workplace/output/ 中的文件。"""
+        """下载 workplace/output/ 中的文件；要求文件位于当前用户拥有的 session 目录下。"""
         qs = parse_qs(parsed.query)
         rel_path = (qs.get("path") or [""])[0].strip()
         if not rel_path:
@@ -707,6 +859,15 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
             return
         if not target.exists() or not target.is_file():
             self._send_error_json(404, f"not found: {rel_path}")
+            return
+        # 越权校验：文件必须在当前用户某个 session 的目录下
+        try:
+            relative_parts = target.relative_to(OUTPUT_DIR.resolve()).parts
+        except ValueError:
+            relative_parts = ()
+        owner_sid = relative_parts[0] if relative_parts else ""
+        if owner_sid not in self._owned_session_ids():
+            self._send_error_json(403, "forbidden: session does not belong to current user")
             return
         if not is_visible_output_path(target):
             self._send_error_json(403, f"unsupported download type: {target.suffix.lower()}")

@@ -207,7 +207,24 @@ PYTHONPATH=src uv run python -m frontend.server
 # 可选参数：--host 0.0.0.0 --port 8787 --config path/to/settings.json
 ```
 
-Web 端固定使用 `session_key = agent:main:web:local:web-user`，与 CLI、飞书 channel 相互隔离，不会互相污染会话。
+Web 端走「邮箱 + 密码」账号体系，每个用户自己的 `session_key` 形如 `agent:main:web:user:u<id>`，用户之间彼此不可见；CLI 和飞书 channel 仍然使用各自的固定 key，不走登录流程。
+
+### 账号与登录（仅 Web）
+
+- 数据层：SQLite 单文件 [private/auth.db](/Users/wangyc/Desktop/projects/Pooh-code/private)（**故意放在项目根目录下的 `private/` 而不是 `workplace/`**，这样 agent 的沙箱根本看不到/改不了 `auth.db`；`private/` 整目录已加入 `.gitignore`），两张表：`users(id, email unique, pwd_hash, created_at)` 和 `auth_tokens(token, user_id, created_at, expires_at, ua)`；代码见 [src/pooh_code/auth_db.py](/Users/wangyc/Desktop/projects/Pooh-code/src/pooh_code/auth_db.py)
+- 密码哈希：`hashlib.scrypt`（stdlib，无新依赖），N=2^14，每用户独立 16 字节随机盐，存储格式 `scrypt$<salt_hex>$<digest_hex>`
+- Token：登录/注册后服务端生成 32 字节 `secrets.token_urlsafe`，存进 `auth_tokens` 表（TTL 30 天），以 `pooh_token` cookie（`HttpOnly; SameSite=Lax; Path=/`）发给浏览器；退出登录时 DB 删除 token 并清 cookie，可随时踢下线
+- 中间件：所有 `/api/*` 路由（除 `/api/auth/*`）都要求已登录，未登录直接 401；`GET /` 未登录时 302 跳 `/login`
+- 登录页：独立 HTML [src/frontend/static/login.html](/Users/wangyc/Desktop/projects/Pooh-code/src/frontend/static/login.html)，支持登录 / 注册两种模式切换
+- 前端：[app.js](/Users/wangyc/Desktop/projects/Pooh-code/src/frontend/static/app.js) 的 `api()` 收到 401 自动跳回 `/login`；侧栏底部显示当前邮箱与「退出」按钮
+- 会话越权保护：所有 `POST /api/session/*` 如果请求体指定了 `session_id`，会校验它必须属于当前用户的 `session_key`，否则 403
+- 产物归档隔离：`/api/files` 只返回当前用户拥有的 session 对应的产物分组（不是所有用户共用），`/api/download` 也会校验文件所在的 `session_id` 属于当前用户，否则 403——彻底阻止横向越权查看其他用户的文件
+- 老数据：之前 `local:web-user` 槽位下的 session 直接作废（不会迁移到任何账号），新用户注册后从空会话开始
+
+| POST | `/api/auth/register` | 邮箱 + 密码 + 可选邀请码注册并自动登录 |
+| POST | `/api/auth/login` | 邮箱 + 密码登录，成功后写 `pooh_token` cookie |
+| POST | `/api/auth/logout` | 登出，DB 删 token + 清 cookie |
+| GET  | `/api/auth/me` | 返回当前登录用户（未登录 401） |
 
 ### 界面功能
 
