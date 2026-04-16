@@ -297,9 +297,13 @@ function setSessionRunning(sessionId, running) {
 
 function updateRunningUI() {
   const currentBusy = !!(state.sessionId && state.runningSessions.has(state.sessionId));
-  els.btnSend.disabled = currentBusy;
+  // 运行中也允许输入——发送走 inject 端点，不中断推理
+  els.btnSend.disabled = false;
   els.btnStop.disabled = !currentBusy;
-  els.input.disabled = currentBusy;
+  els.input.disabled = false;
+  els.input.placeholder = currentBusy
+    ? "输入消息插话，Agent 将在下一轮看到 / Enter 发送"
+    : "输入消息，Enter 发送 / Shift+Enter 换行，以 / 开头执行命令";
   if (currentBusy) {
     setStatus("busy", "当前会话运行中…");
     return;
@@ -1475,6 +1479,18 @@ async function streamChat(text, files = []) {
         }
         finished = true;
         break;
+      case "injected":
+        // 用户插话被 agent 接收，在助手气泡中插入一条提示
+        removeCursor(bubble);
+        _endOtherBlocks(bubble, null);
+        const injDiv = document.createElement("div");
+        injDiv.className = "injected-msg stream-part";
+        injDiv.innerHTML = `<span class="injected-badge">USER</span> ${escapeHtml(evt.text || "")}`;
+        bubble.body.appendChild(injDiv);
+        ensureCursor(bubble);
+        agentStatus.set("busy", "插话已送达", "Agent 正在基于你的新消息继续推理…");
+        autoScrollIfNear();
+        break;
       case "state":
         applyState(evt);
         break;
@@ -1542,10 +1558,29 @@ async function streamChat(text, files = []) {
   }
 }
 
+async function injectMessage(sessionId, text) {
+  appendMessage("user", text);
+  agentStatus.set("busy", "已插话", "Agent 将在当前工具执行完后看到你的消息");
+  try {
+    await api("/api/session/inject", {
+      method: "POST",
+      body: { session_id: sessionId, text },
+    });
+  } catch (err) {
+    appendMessage("system", `插话失败: ${err.message}`);
+  }
+}
+
 async function sendMessage(text) {
   if (!text.trim() && !state.pendingFiles.length) return;
   const launchedSessionId = state.sessionId;
-  if (launchedSessionId && state.runningSessions.has(launchedSessionId)) return;
+
+  // 如果当前 session 正在运行 → 走 inject 端点，不中断推理
+  if (launchedSessionId && state.runningSessions.has(launchedSessionId)) {
+    if (!text.trim()) return; // inject 不支持纯附件
+    await injectMessage(launchedSessionId, text);
+    return;
+  }
 
   // 收集附件路径并清空
   const filePaths = state.pendingFiles.map((f) => f.serverPath);
@@ -1564,7 +1599,6 @@ async function sendMessage(text) {
       });
       data.session_id = data.session_id || launchedSessionId;
       applyState(data);
-      // /clear /new /switch 会改写 transcript，先刷新历史避免重复。
       await refreshMessages();
       appendMessage("system", `> ${text}`);
       if (data.text && data.text !== "__EXIT__") {

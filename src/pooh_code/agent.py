@@ -305,6 +305,7 @@ class PoohAgent:
         session_id: str | None = None,
         cancel_event: threading.Event | None = None,
         files: list[str] | None = None,
+        inject_drain: Any | None = None,
     ) -> AgentReply:
         """Streaming variant of `ask`.
 
@@ -466,6 +467,18 @@ class PoohAgent:
                         tool_result_blocks,
                         session_id=actual_session_id,
                     )
+
+                # ── 检查用户插话 ──
+                if inject_drain:
+                    injected_msgs = inject_drain()
+                    for inj_text in injected_msgs:
+                        _emit("injected", {"text": inj_text})
+                        self.sessions.append_message(
+                            session_key,
+                            "user",
+                            inj_text,
+                            session_id=actual_session_id,
+                        )
             else:
                 # for 循环正常跑完意味着跑满 max_turns 还在 tool_use,被强制截断
                 note = (

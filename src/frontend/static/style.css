@@ -1564,6 +1564,28 @@ body.theme-dark .theme-icon-moon {
   opacity: 0.7;
 }
 
+.injected-msg {
+  padding: 8px 12px;
+  margin: 4px 0;
+  border-radius: 8px;
+  background: rgba(47,123,255,0.10);
+  border-left: 3px solid #2f7bff;
+  font-size: 13px;
+  color: var(--fg);
+}
+.injected-badge {
+  display: inline-block;
+  background: #2f7bff;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-right: 8px;
+  vertical-align: middle;
+  letter-spacing: 0.5px;
+}
+
 .empty {
   width: 100%;
   margin: 0 0 10px;

@@ -428,6 +428,8 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 return self._handle_delete_session()
             if path == "/api/session/cancel":
                 return self._handle_cancel_session()
+            if path == "/api/session/inject":
+                return self._handle_inject()
             if path == "/api/session/rename":
                 return self._handle_rename_session()
             if path == "/api/session/compact":
@@ -700,6 +702,7 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 session_id=session_id,
                 cancel_event=run.cancel_event,
                 files=files or None,
+                inject_drain=run.drain_injects,
             )
             _write_sse("state", self._state_payload(session_id))
         except concurrent.futures.CancelledError:
@@ -888,6 +891,17 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _handle_inject(self) -> None:
+        body = self._read_json_body()
+        session_id = str(body.get("session_id", "")).strip()
+        text = str(body.get("text", "")).strip()
+        if not session_id or not text:
+            raise ValueError("session_id and text are required")
+        if not self.server.runs.is_running(session_id):
+            raise ValueError("session is not running; send a normal message instead")
+        self.server.runs.inject(session_id, text)
+        self._send_json({"ok": True, "session_id": session_id})
+
     def _handle_rename_session(self) -> None:
         body = self._read_json_body()
         session_id = str(body.get("session_id", "")).strip()
@@ -921,6 +935,18 @@ class SessionRun:
         self.session_id = session_id
         self.started_at = time.time()
         self.cancel_event = threading.Event()
+        self.inject_queue: list[str] = []  # 用户插话消息队列
+        self._inject_lock = threading.Lock()
+
+    def push_inject(self, text: str) -> None:
+        with self._inject_lock:
+            self.inject_queue.append(text)
+
+    def drain_injects(self) -> list[str]:
+        with self._inject_lock:
+            msgs = list(self.inject_queue)
+            self.inject_queue.clear()
+            return msgs
 
 
 class RunRegistry:
@@ -953,6 +979,18 @@ class RunRegistry:
     def is_running(self, session_id: str) -> bool:
         with self._lock:
             return session_id in self._runs
+
+    def inject(self, session_id: str, text: str) -> bool:
+        with self._lock:
+            run = self._runs.get(session_id)
+            if not run:
+                return False
+            run.push_inject(text)
+            return True
+
+    def get_run(self, session_id: str) -> SessionRun | None:
+        with self._lock:
+            return self._runs.get(session_id)
 
 
 def build_server(host: str, port: int, *, config_path: Path | None = None) -> PoohFrontendServer:

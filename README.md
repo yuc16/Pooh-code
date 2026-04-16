@@ -242,7 +242,7 @@ Web 端走「邮箱 + 密码」账号体系，每个用户自己的 `session_key
   - 兜底机制：即便 SSE 流提前关闭未收到 `done` 事件，前端也会在 `finally` 里强制把「思考中」落定为「已思考」并用已接收到的文本渲染 Markdown，避免"agent 已回答完但前端卡在思考中需要手动刷新"的旧 bug
   - 8 秒无事件会追加"响应延迟较高，已等候 Xs"提示，让用户知道不是前端卡了
 - 主聊天区：user / assistant / system 三种气泡，支持正常上下滚动（老版本的 flex `min-height` bug 已修）
-- 输入框：Enter 发送，Shift+Enter 换行，textarea 高度自动增长；当前会话运行中时会禁用输入框并显示 `停止` 按钮
+- 输入框：Enter 发送，Shift+Enter 换行，textarea 高度自动增长；**agent 运行时输入框保持可用**——用户可随时输入并发送「插话」消息（走 `POST /api/session/inject`），消息会被推入运行中 session 的注入队列，agent 在当前工具执行完、下一轮 LLM 调用前自动读取并追加到 transcript，SSE 流会发一条 `injected` 事件通知前端（在助手气泡中内联显示蓝色 USER 标签 + 插话内容）；placeholder 会切换为"发送插话，Agent 将在下一轮看到"提示；运行时也仍有 `停止` 按钮可用
 - 文件上传：输入框左侧的 📎 按钮或拖放文件到输入区域均可添加附件；支持图片（png/jpg/gif/webp）、视频（mp4/mov/avi/webm）、PDF、Office 文档（docx/xlsx/pptx）、CSV、纯文本等；附件会显示为预览条，可单独移除。各类型文件的处理方式：
   - **图片** → base64 编码直接发给多模态 LLM
   - **视频** → 由于当前主流多模态模型（GPT-4o、GPT-4.1 等）尚不支持直接接收视频，需要拆解为模型能理解的格式：ffmpeg 提取关键帧（每 10 秒一帧，最多 4 帧）转为图片 + ffmpeg 提取音频后用 `faster-whisper` 本地模型语音转文字，最终以「关键帧图片 + 带时间戳的语音文本」形式发给 LLM
@@ -313,6 +313,7 @@ SSE 连接使用 `Connection: close` 并在服务端强制 `self.close_connectio
 | POST | `/api/session/clear` | 清空当前会话 transcript；运行中的会话不允许清空 |
 | POST | `/api/session/rename` | 重命名会话标题；请求体 `{session_id, label}`，写入 `sessions.json` |
 | POST | `/api/session/cancel` | 给指定 `session_id` 发送取消信号 |
+| POST | `/api/session/inject` | 向正在运行的 `session_id` 注入一条用户消息（不中断推理，agent 下一轮自动读取） |
 | POST | `/api/session/delete` | 删除指定 `session_id`，同步删除磁盘上的 transcript 目录和 `workplace/output/<session_id>/` 产物目录；若删的是最后一条会自动创建新会话 |
 | POST | `/api/session/compact` | 强制触发一次 compact；运行中的会话不允许 compact |
 
