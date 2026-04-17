@@ -25,6 +25,23 @@ logger = logging.getLogger(__name__)
 MAX_TOOL_OUTPUT = 40000
 
 
+def _find_uv_path() -> str | None:
+    uv_path = shutil.which("uv")
+    if uv_path:
+        return str(Path(uv_path).resolve())
+    candidates = [
+        Path.home() / ".local/bin/uv",
+        Path("/root/.local/bin/uv"),
+        Path("/usr/local/bin/uv"),
+        Path("/usr/bin/uv"),
+        Path("/bin/uv"),
+    ]
+    for candidate in candidates:
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate.resolve())
+    return None
+
+
 def _get_tavily_key() -> str:
     return os.getenv("TAVILY_API_KEY", "")
 
@@ -96,7 +113,7 @@ def _linux_bwrap_usable() -> bool:
         return False
     workplace = str(WORKPLACE_DIR.resolve())
     project_root = str(WORKPLACE_DIR.parent.resolve())
-    uv_path = shutil.which("uv")
+    uv_path = _find_uv_path()
     uv_mount: list[str] = []
     if uv_path:
         uv_parent = str(Path(uv_path).resolve().parent.parent)
@@ -159,7 +176,7 @@ def _build_sandboxed_bash(command: str, chdir: Path) -> tuple[list[str] | str, b
         # - /tmp 用私有 tmpfs 隔离
         # - 保留网络(--share-net),方便 web_search/pip 等
         project_root = str(WORKPLACE_DIR.parent.resolve())
-        uv_path = shutil.which("uv")
+        uv_path = _find_uv_path()
         uv_mount: list[str] = []
         if uv_path:
             uv_parent = str(Path(uv_path).resolve().parent.parent)
@@ -204,7 +221,7 @@ def _build_sandboxed_bash(command: str, chdir: Path) -> tuple[list[str] | str, b
 def _tool_env() -> dict[str, str]:
     env = os.environ.copy()
     path_entries = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
-    uv_path = shutil.which("uv")
+    uv_path = _find_uv_path()
     if uv_path:
         uv_dir = str(Path(uv_path).resolve().parent)
         if uv_dir not in path_entries:
