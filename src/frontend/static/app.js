@@ -141,12 +141,15 @@ let state = {
   capabilities: null,
   capabilitiesSig: "",
   liveBubbles: new Map(),
+  messageRenderSeq: 0,
   welcomeCardsCollapsed: {
     commands: false,
     tools: false,
     skills: false,
   },
 };
+
+let delayedFilesRefreshTimer = null;
 
 const SIDEBAR_WIDTH_KEY = "pooh.sidebar.width";
 const SIDEBAR_MIN = 220;
@@ -855,6 +858,55 @@ function appendMessage(role, text, { scroll = true } = {}) {
   if (scroll) els.messages.scrollTop = els.messages.scrollHeight;
 }
 
+function buildHistoryMessageNode(message) {
+  if (!message) return null;
+  if (message.role === "assistant") {
+    const shell = createMessageShell("assistant");
+    let bodyHTML = "";
+    if (message.tools && message.tools.length) {
+      bodyHTML += buildToolGroupHTML(message.tools);
+    }
+    if (message.text && message.text.trim()) {
+      bodyHTML += `<div class="stream-part">${renderMarkdown(message.text)}</div>`;
+    }
+    shell.body.classList.add("rendered");
+    shell.body.innerHTML = bodyHTML || renderMarkdown("(empty response)");
+    enhanceRenderedContent(shell.body);
+    setCopyButtonState(shell.copyBtn, message.text || shell.body.textContent || "");
+    return shell.root;
+  }
+  if (message.text && message.text.trim()) {
+    const shell = createMessageShell(message.role, {
+      navId: message.role === "user" ? `msg-${_msgIndex++}` : null,
+    });
+    if (message.role === "assistant" || message.role === "user") {
+      const renderedText = message.role === "user" ? normalizeUserMarkdown(message.text) : message.text;
+      shell.body.classList.add("rendered");
+      shell.body.innerHTML = renderMarkdown(renderedText);
+      enhanceRenderedContent(shell.body);
+      setCopyButtonState(shell.copyBtn, message.text);
+    } else {
+      shell.body.innerHTML = renderInline(message.text);
+    }
+    return shell.root;
+  }
+  return null;
+}
+
+function nextPaint() {
+  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+}
+
+function scheduleRefreshFiles(delay = 180) {
+  if (delayedFilesRefreshTimer) {
+    window.clearTimeout(delayedFilesRefreshTimer);
+  }
+  delayedFilesRefreshTimer = window.setTimeout(() => {
+    delayedFilesRefreshTimer = null;
+    refreshFiles();
+  }, delay);
+}
+
 function clearMessages() {
   els.messages.innerHTML = "";
 }
@@ -940,28 +992,23 @@ async function refreshMessages() {
   try {
     const query = state.sessionId ? `?session_id=${encodeURIComponent(state.sessionId)}` : "";
     const data = await api(`/api/messages${query}`);
+    const renderSeq = ++state.messageRenderSeq;
+    const sessionAtStart = state.sessionId;
     applyState(data);
     clearMessages();
     els.messages.appendChild(els.emptyHint || document.createElement("div"));
-    syncIntroMode((data.messages || []).length > 0);
-    for (const m of data.messages || []) {
-      if (m.role === "assistant") {
-        const shell = createMessageShell("assistant");
-        let bodyHTML = "";
-        if (m.tools && m.tools.length) {
-          bodyHTML += buildToolGroupHTML(m.tools);
-        }
-        if (m.text && m.text.trim()) {
-          bodyHTML += `<div class="stream-part">${renderMarkdown(m.text)}</div>`;
-        }
-        shell.body.classList.add("rendered");
-        shell.body.innerHTML = bodyHTML || renderMarkdown("(empty response)");
-        enhanceRenderedContent(shell.body);
-        setCopyButtonState(shell.copyBtn, m.text || shell.body.textContent || "");
-        els.messages.appendChild(shell.root);
-      } else if (m.text && m.text.trim()) {
-        appendMessage(m.role, m.text, { scroll: false });
+    const messages = data.messages || [];
+    syncIntroMode(messages.length > 0);
+    const chunkSize = 6;
+    for (let i = 0; i < messages.length; i += chunkSize) {
+      if (renderSeq !== state.messageRenderSeq || sessionAtStart !== state.sessionId) return;
+      const frag = document.createDocumentFragment();
+      for (const message of messages.slice(i, i + chunkSize)) {
+        const node = buildHistoryMessageNode(message);
+        if (node) frag.appendChild(node);
       }
+      els.messages.appendChild(frag);
+      await nextPaint();
     }
     const liveBubble = state.liveBubbles.get(state.sessionId);
     if (liveBubble) {
@@ -1769,8 +1816,8 @@ async function switchSession(prefix) {
     await refreshMessages();
     window.requestAnimationFrame(() => {
       refreshSessions();
-      refreshFiles();
     });
+    scheduleRefreshFiles();
   } catch (err) {
     setStatus("err", err.message);
   }
