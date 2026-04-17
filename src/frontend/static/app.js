@@ -139,6 +139,8 @@ let state = {
   runningSessions: new Set(),
   pendingFiles: [], // [{file: File, serverPath: string, name: string}]
   capabilities: null,
+  capabilitiesSig: "",
+  liveBubbles: new Map(),
   welcomeCardsCollapsed: {
     commands: false,
     tools: false,
@@ -489,8 +491,12 @@ function applyState(payload) {
     if (els.contextPill) els.contextPill.textContent = payload.usage.display || "--/--";
   }
   if (payload.capabilities) {
-    state.capabilities = payload.capabilities;
-    renderWelcomePanel();
+    const nextSig = JSON.stringify(payload.capabilities);
+    if (nextSig !== state.capabilitiesSig) {
+      state.capabilities = payload.capabilities;
+      state.capabilitiesSig = nextSig;
+      renderWelcomePanel();
+    }
   }
   updateRunningUI();
 }
@@ -957,6 +963,17 @@ async function refreshMessages() {
         appendMessage(m.role, m.text, { scroll: false });
       }
     }
+    const liveBubble = state.liveBubbles.get(state.sessionId);
+    if (liveBubble) {
+      if (!liveBubble.root.isConnected) {
+        els.messages.appendChild(liveBubble.root);
+      }
+      for (const part of liveBubble.textParts || []) {
+        if ((part.raw || "") !== (part.renderedRaw || "")) {
+          renderStreamingTextPart(part);
+        }
+      }
+    }
     if ((data.messages || []).length > 0) {
       els.messages.scrollTop = els.messages.scrollHeight;
     }
@@ -1010,16 +1027,12 @@ async function refreshSessions() {
         `${item.running ? '<span class="session-item-run">运行中</span>' : ""}` +
         `<button class="session-item-del" title="删除会话">✕</button>`;
       const mainEl = row.querySelector(".session-item-main");
-      let clickTimer = null;
-      mainEl.addEventListener("click", (e) => {
-        // 如果正在编辑则不触发切换
+      mainEl.addEventListener("click", () => {
         if (row.querySelector(".session-rename-input")) return;
-        if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; return; }
-        clickTimer = setTimeout(() => { clickTimer = null; switchSession(item.session_id); }, 250);
+        switchSession(item.session_id);
       });
       row.querySelector(".session-item-label").addEventListener("dblclick", (e) => {
         e.stopPropagation();
-        if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
         startRenameSession(row, item.session_id, rawLabel);
       });
       row.querySelector(".session-item-del").addEventListener("click", (e) => {
@@ -1097,8 +1110,6 @@ async function deleteSession(sessionId) {
 // ---------- streaming assistant bubble ----------
 function createAssistantBubble() {
   const shell = createMessageShell("assistant");
-  els.messages.appendChild(shell.root);
-  els.messages.scrollTop = els.messages.scrollHeight;
   return {
     root: shell.root,
     body: shell.body,
@@ -1422,7 +1433,11 @@ async function refreshFiles() {
 async function streamChat(text, files = []) {
   const launchedSessionId = state.sessionId;
   const bubble = createAssistantBubble();
+  state.liveBubbles.set(launchedSessionId, bubble);
+  els.messages.appendChild(bubble.root);
+  els.messages.scrollTop = els.messages.scrollHeight;
   ensureCursor(bubble);
+  const canRenderStream = () => state.sessionId === launchedSessionId;
 
   agentStatus.set("busy", "提交请求中", `正在发送消息到 Agent${files.length ? `（含 ${files.length} 个附件）` : ""}`);
 
@@ -1447,35 +1462,49 @@ async function streamChat(text, files = []) {
     agentStatus.markActivity();
     switch (evt.type) {
       case "text_delta":
-        appendTextDelta(bubble, evt.text || "");
-        agentStatus.set("streaming", "生成回复中", "模型正在输出最终回答…");
+        if (canRenderStream()) {
+          appendTextDelta(bubble, evt.text || "");
+          agentStatus.set("streaming", "生成回复中", "模型正在输出最终回答…");
+        }
         break;
       case "reasoning_delta":
-        appendReasoningDelta(bubble, evt.text || "");
-        agentStatus.set("thinking", "思考中", "模型正在进行推理（reasoning）…");
+        if (canRenderStream()) {
+          appendReasoningDelta(bubble, evt.text || "");
+          agentStatus.set("thinking", "思考中", "模型正在进行推理（reasoning）…");
+        }
         break;
       case "reasoning_part_added":
-        startReasoningPart(bubble);
-        agentStatus.set("thinking", "思考中", "开始新的推理片段…");
+        if (canRenderStream()) {
+          startReasoningPart(bubble);
+          agentStatus.set("thinking", "思考中", "开始新的推理片段…");
+        }
         break;
       case "reasoning_part_done":
         break;
       case "tool_use_started":
-        addToolBlock(bubble, { call_id: evt.call_id, name: evt.name });
-        agentStatus.set("tool", `调用工具: ${evt.name || "unknown"}`, "模型正在构造工具调用参数…");
+        if (canRenderStream()) {
+          addToolBlock(bubble, { call_id: evt.call_id, name: evt.name });
+          agentStatus.set("tool", `调用工具: ${evt.name || "unknown"}`, "模型正在构造工具调用参数…");
+        }
         break;
       case "tool_use_done":
-        finalizeToolInput(bubble, evt);
-        agentStatus.set("tool", `执行工具: ${evt.name || "unknown"}`, "等待工具返回结果…");
+        if (canRenderStream()) {
+          finalizeToolInput(bubble, evt);
+          agentStatus.set("tool", `执行工具: ${evt.name || "unknown"}`, "等待工具返回结果…");
+        }
         break;
       case "tool_result":
-        attachToolResult(bubble, evt);
-        agentStatus.set("busy", "工具已返回", "继续交由模型处理结果…");
+        if (canRenderStream()) {
+          attachToolResult(bubble, evt);
+          agentStatus.set("busy", "工具已返回", "继续交由模型处理结果…");
+        }
         break;
       case "turn_start":
-        agentStatus.set("busy", `第 ${evt.turn || 1} 轮`, "开始新一轮 LLM 推理…");
+        if (canRenderStream()) {
+          agentStatus.set("busy", `第 ${evt.turn || 1} 轮`, "开始新一轮 LLM 推理…");
+        }
         // subtle divider between turns
-        if (evt.turn && evt.turn > 1) {
+        if (canRenderStream() && evt.turn && evt.turn > 1) {
           removeCursor(bubble);
           bubble.currentText = null;
           const div = document.createElement("div");
@@ -1486,7 +1515,9 @@ async function streamChat(text, files = []) {
         }
         break;
       case "compacted":
-        agentStatus.set("busy", "上下文已压缩", `autocompact → ${evt.display || ""}`);
+        if (canRenderStream()) {
+          agentStatus.set("busy", "上下文已压缩", `autocompact → ${evt.display || ""}`);
+        }
         if (state.sessionId === launchedSessionId) {
           appendMessage("system", `[autocompact -> ${evt.display || ""}]`);
         }
@@ -1509,63 +1540,75 @@ async function streamChat(text, files = []) {
         break;
       case "done":
         setSessionRunning(launchedSessionId, false);
-        agentStatus.set("idle", "完成", "回答已返回");
-        removeCursor(bubble);
-        finalizeToolGroup(bubble);
-        // 把每段原始文本用 markdown 渲染替换
-        for (const part of bubble.textParts) {
-          finalizeStreamingTextPart(part);
-        }
-        bubble.body.classList.add("rendered");
-        if (!bubble.body.textContent.trim()) {
-          bubble.body.innerHTML = renderMarkdown(evt.text || "(empty response)");
-          enhanceRenderedContent(bubble.body);
-        }
-        setCopyButtonState(
-          bubble.copyBtn,
-          bubble.textParts.map((part) => part.raw).join("\n\n") || evt.text || "",
-        );
-        // 将累积的下载按钮追加到气泡末尾
-        if (bubble._pendingDownloads && bubble._pendingDownloads.length) {
-          const dlContainer = document.createElement("div");
-          dlContainer.className = "stream-part";
-          dlContainer.style.display = "flex";
-          dlContainer.style.flexWrap = "wrap";
-          dlContainer.style.gap = "8px";
-          for (const btn of bubble._pendingDownloads) {
-            dlContainer.appendChild(btn);
+        if (canRenderStream()) {
+          agentStatus.set("idle", "完成", "回答已返回");
+          removeCursor(bubble);
+          finalizeToolGroup(bubble);
+          // 把每段原始文本用 markdown 渲染替换
+          for (const part of bubble.textParts) {
+            finalizeStreamingTextPart(part);
           }
-          bubble.body.appendChild(dlContainer);
+          bubble.body.classList.add("rendered");
+          if (!bubble.body.textContent.trim()) {
+            bubble.body.innerHTML = renderMarkdown(evt.text || "(empty response)");
+            enhanceRenderedContent(bubble.body);
+          }
+          setCopyButtonState(
+            bubble.copyBtn,
+            bubble.textParts.map((part) => part.raw).join("\n\n") || evt.text || "",
+          );
+          // 将累积的下载按钮追加到气泡末尾
+          if (bubble._pendingDownloads && bubble._pendingDownloads.length) {
+            const dlContainer = document.createElement("div");
+            dlContainer.className = "stream-part";
+            dlContainer.style.display = "flex";
+            dlContainer.style.flexWrap = "wrap";
+            dlContainer.style.gap = "8px";
+            for (const btn of bubble._pendingDownloads) {
+              dlContainer.appendChild(btn);
+            }
+            bubble.body.appendChild(dlContainer);
+          }
         }
         if (evt.session_id && state.sessionId === launchedSessionId) {
           state.sessionId = evt.session_id;
           els.sessionId.textContent = evt.session_id;
         }
+        state.liveBubbles.delete(launchedSessionId);
         finished = true;
         break;
       case "injected":
         // 用户插话被 agent 接收，在助手气泡中插入一条提示
-        removeCursor(bubble);
-        _endOtherBlocks(bubble, null);
-        const injDiv = document.createElement("div");
-        injDiv.className = "injected-msg stream-part";
-        injDiv.innerHTML = `<span class="injected-badge">USER</span> ${escapeHtml(evt.text || "")}`;
-        bubble.body.appendChild(injDiv);
-        ensureCursor(bubble);
-        agentStatus.set("busy", "插话已送达", "Agent 正在基于你的新消息继续推理…");
-        autoScrollIfNear();
+        if (canRenderStream()) {
+          removeCursor(bubble);
+          _endOtherBlocks(bubble, null);
+          const injDiv = document.createElement("div");
+          injDiv.className = "injected-msg stream-part";
+          injDiv.innerHTML = `<span class="injected-badge">USER</span> ${escapeHtml(evt.text || "")}`;
+          bubble.body.appendChild(injDiv);
+          ensureCursor(bubble);
+          agentStatus.set("busy", "插话已送达", "Agent 正在基于你的新消息继续推理…");
+          autoScrollIfNear();
+        }
         break;
       case "state":
-        applyState(evt);
+        if (state.sessionId === launchedSessionId) {
+          applyState(evt);
+        } else if (typeof evt.running === "boolean") {
+          setSessionRunning(launchedSessionId, evt.running);
+        }
         break;
       case "error":
         setSessionRunning(launchedSessionId, false);
-        agentStatus.set("error", "发生错误", evt.error || "未知错误");
-        removeCursor(bubble);
+        if (canRenderStream()) {
+          agentStatus.set("error", "发生错误", evt.error || "未知错误");
+          removeCursor(bubble);
+        }
         if (state.sessionId === launchedSessionId) {
           appendMessage("system", `请求失败: ${evt.error || "unknown"}`);
           setStatus("err", evt.error || "error");
         }
+        state.liveBubbles.delete(launchedSessionId);
         break;
     }
   };
@@ -1615,6 +1658,7 @@ async function streamChat(text, files = []) {
       setSessionRunning(launchedSessionId, false);
       agentStatus.set("idle", "连接已结束", "流式响应提前终止，已显示已接收的内容");
     }
+    state.liveBubbles.delete(launchedSessionId);
   }
 }
 
@@ -1716,12 +1760,17 @@ async function newSession() {
 
 async function switchSession(prefix) {
   try {
+    if (!prefix || prefix === state.sessionId) return;
     const data = await api("/api/session/switch", {
       method: "POST",
       body: { session_id_prefix: prefix, session_id: state.sessionId },
     });
     applyState(data);
-    await Promise.all([refreshMessages(), refreshSessions(), refreshFiles()]);
+    await refreshMessages();
+    window.requestAnimationFrame(() => {
+      refreshSessions();
+      refreshFiles();
+    });
   } catch (err) {
     setStatus("err", err.message);
   }
