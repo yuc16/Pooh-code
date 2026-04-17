@@ -37,7 +37,7 @@
   - 会话隔离规则
   - 重要前端交互约定
 - 工具/环境约定：
-  - `uv`、`.venv/bin/python`
+  - `uv run python`
   - `workplace/` 作为工具根目录
 
 在没有明确持久价值时，宁可不记。

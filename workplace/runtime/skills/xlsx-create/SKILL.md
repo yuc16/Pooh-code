@@ -211,7 +211,7 @@ ws.conditional_formatting.add(
 - **当前会话的所有 agent 文件都放到 `output/<session_id>/`**
 - **始终使用 Excel 公式**，不要用 Python 计算后硬编码结果
 - `session_id` 从 Runtime 里的 `current_session_id` 读取；当前目录也会在 Runtime 的 `session_output_dir_relative_to_workplace` 给出
-- 用 `write_file(path=f"output/{session_id}/gen_xlsx.py")` 写 Python 脚本，用 `bash` 在 `cwd=workplace` 下执行它，python解释器在/Users/wangyc/Desktop/projects/Pooh-code/.venv/bin/python
+- 用 `write_file(path=f"output/{session_id}/gen_xlsx.py")` 写 Python 脚本，用 `bash` 在 `cwd=workplace` 下执行它；优先使用 `uv run python` 执行生成脚本，不要写死本机解释器绝对路径
 - 最终 `.xlsx` 也写到同一个 `output/<session_id>/` 目录；不要写到其他会话目录
 - 生成完毕后告知用户文件名，前端自动显示下载按钮
 - 处理大数据量时优先用 pandas 读取分析，用 openpyxl 做最终格式化输出

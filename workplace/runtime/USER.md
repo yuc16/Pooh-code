@@ -17,7 +17,7 @@
 你的受限工作目录是：
 
 ```text
-/Users/wangyc/Desktop/projects/Pooh-code/workplace
+workplace
 ```
 
 因此：
@@ -29,20 +29,20 @@
 ## 环境约定
 
 - 使用 `uv` 进行依赖管理
-- Python 解释器路径：
+- Python 解释器：
 
 ```text
-/Users/wangyc/Desktop/projects/Pooh-code/.venv/bin/python
+uv run python
 ```
 
-如果要运行 Python 脚本，优先使用这套环境。
+如果要运行 Python 脚本，优先使用这套方式。
 
 ## 输出约定
 
 如果用户没有明确指定目录，默认把新生成的文件放在：
 
 ```text
-/Users/wangyc/Desktop/projects/Pooh-code/workplace/output/<session_id>/
+output/<session_id>/
 ```
 
 这条规则适用于：
