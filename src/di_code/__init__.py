@@ -1,4 +1,4 @@
-"""pooh-code package."""
+"""di-code package."""
 
 __all__ = ["__version__"]
 

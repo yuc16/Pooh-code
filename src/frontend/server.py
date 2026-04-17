@@ -1,4 +1,4 @@
-"""Lightweight HTTP server exposing PoohAgent to a web frontend.
+"""Lightweight HTTP server exposing di-code agent to a web frontend.
 
 Run it with:
 
@@ -26,16 +26,16 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlparse
 
-# Ensure the sibling package `pooh_code` is importable when this file is run
+# Ensure the sibling package `di_code` is importable when this file is run
 # directly (e.g. `python src/frontend/server.py`).
 _SRC_DIR = Path(__file__).resolve().parent.parent
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from pooh_code.agent import PoohAgent  # noqa: E402
-from pooh_code.commands import CommandProcessor  # noqa: E402
-from pooh_code.config import load_settings  # noqa: E402
-from pooh_code.output_files import (  # noqa: E402
+from di_code.agent import PoohAgent  # noqa: E402
+from di_code.commands import CommandProcessor  # noqa: E402
+from di_code.config import load_settings  # noqa: E402
+from di_code.output_files import (  # noqa: E402
     delete_session_output_dir,
     OUTPUT_DIR,
     group_output_files_by_session,
@@ -744,7 +744,7 @@ def build_server(host: str, port: int, *, config_path: Path | None = None) -> Po
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="pooh-frontend")
+    parser = argparse.ArgumentParser(prog="di-frontend")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--config", default=None, help="Path to settings.json")
@@ -753,7 +753,7 @@ def main(argv: list[str] | None = None) -> int:
     config_path = Path(args.config) if args.config else None
     server = build_server(args.host, args.port, config_path=config_path)
     url = f"http://{args.host}:{args.port}"
-    print(f"pooh-code frontend ready at {url}")
+    print(f"di-code frontend ready at {url}")
     print("press Ctrl-C to stop")
     try:
         server.serve_forever()

@@ -25,5 +25,5 @@ class CLIChannel(Channel):
 
     def send(self, peer_id: str, text: str, **kwargs) -> bool:
         _ = peer_id, kwargs
-        print(f"\npooh-code> {text}\n")
+        print(f"\ndi-code> {text}\n")
         return True

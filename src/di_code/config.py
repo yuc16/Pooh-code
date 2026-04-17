@@ -35,7 +35,7 @@ class SearchConfig:
 
 @dataclass
 class AgentConfig:
-    name: str = "pooh-code"
+    name: str = "di-code"
     model: str = "Qwen3.5-397B-A17B"
     max_turns: int = 8
     context_window: int = 131072
@@ -103,7 +103,7 @@ def load_settings(path: Path | None = None) -> AgentConfig:
     reasoning = raw.get("reasoning", {})
     search = raw.get("search", {})
     cfg = AgentConfig(
-        name=raw.get("name", "pooh-code"),
+        name=raw.get("name", "di-code"),
         model=raw.get("model", "Qwen3.5-397B-A17B"),
         max_turns=int(raw.get("max_turns", 8)),
         context_window=int(raw.get("context_window", 131072)),

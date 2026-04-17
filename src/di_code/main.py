@@ -147,7 +147,7 @@ def _run_feishu_background(agent: PoohAgent) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="pooh-code")
+    parser = argparse.ArgumentParser(prog="di-code")
     parser.add_argument("--config", help="Path to settings.json", default=None)
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser("serve", help="同时启动 CLI 和飞书长连接")

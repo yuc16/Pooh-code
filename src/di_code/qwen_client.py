@@ -408,6 +408,11 @@ def _consume_sse(
 
             delta = choice.get("delta") or {}
 
+            # ── reasoning_content field (some vLLM/SGLang builds) ────────
+            rc = delta.get("reasoning_content")
+            if rc:
+                emit("reasoning_delta", {"text": rc})
+
             # ── text content delta ────────────────────────────────────────
             cd = delta.get("content")
             if cd:

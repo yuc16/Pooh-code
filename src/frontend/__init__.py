@@ -1,1 +1,1 @@
-"""Web frontend for pooh-code."""
+"""Web frontend for di-code."""

@@ -36,7 +36,7 @@ let state = {
   pendingFiles: [], // [{file: File, serverPath: string, name: string}]
 };
 
-const SIDEBAR_WIDTH_KEY = "pooh.sidebar.width";
+const SIDEBAR_WIDTH_KEY = "di.sidebar.width";
 const SIDEBAR_MIN = 220;
 const SIDEBAR_MAX = 520;
 
@@ -220,7 +220,7 @@ function appendMessage(role, text, { scroll = true } = {}) {
   hideEmptyHint();
   const div = document.createElement("div");
   div.className = `msg ${role}`;
-  const roleLabel = role === "user" ? "YOU" : role === "assistant" ? "POOH" : "SYS";
+  const roleLabel = role === "user" ? "YOU" : role === "assistant" ? "DI" : "SYS";
   if (role === "assistant") {
     div.innerHTML = `<span class="role">${roleLabel}</span><div class="body rendered">${renderMarkdown(text)}</div>`;
   } else {
@@ -323,7 +323,7 @@ async function refreshMessages() {
           if (m.text && m.text.trim()) {
             bodyHTML += `<div class="stream-part">${renderMarkdown(m.text)}</div>`;
           }
-          div.innerHTML = `<span class="role">POOH</span><div class="body rendered">${bodyHTML || "(empty response)"}</div>`;
+          div.innerHTML = `<span class="role">DI</span><div class="body rendered">${bodyHTML || "(empty response)"}</div>`;
           els.messages.appendChild(div);
         } else if (m.text && m.text.trim()) {
           appendMessage(m.role, m.text, { scroll: false });
@@ -470,7 +470,7 @@ function createAssistantBubble() {
   hideEmptyHint();
   const div = document.createElement("div");
   div.className = "msg assistant";
-  div.innerHTML = `<span class="role">POOH</span><div class="body"></div>`;
+  div.innerHTML = `<span class="role">DI</span><div class="body"></div>`;
   els.messages.appendChild(div);
   els.messages.scrollTop = els.messages.scrollHeight;
   return {

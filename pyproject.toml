@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pooh-code"
+name = "di-code"
 version = "0.1.0"
-description = "Python reimplementation of the core Claude Code workflow with ChatGPT OAuth and Feishu WS access."
+description = "Python reimplementation of the core Claude Code workflow with Qwen and Feishu WS access."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.scripts]
-pooh-code = "pooh_code.main:main"
+di-code = "di_code.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pooh_code"]
+packages = ["src/di_code"]
