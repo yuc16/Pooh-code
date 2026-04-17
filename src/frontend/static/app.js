@@ -645,6 +645,72 @@ function renderMarkdown(text) {
   return renderInline(text);
 }
 
+function shouldStreamRenderMarkdown(text) {
+  const value = typeof text === "string" ? text : "";
+  if (!value) return false;
+  return /[`*_#>\-\[\]\(\)\n|]/.test(value);
+}
+
+function streamRenderDelay(raw) {
+  const size = (raw || "").length;
+  if (size > 32000) return 220;
+  if (size > 16000) return 180;
+  if (size > 8000) return 140;
+  return 90;
+}
+
+function renderStreamingTextPart(part) {
+  if (!part || !part.el) return;
+  const raw = part.raw || "";
+  part.renderedRaw = raw;
+  part.renderHandle = null;
+  if (!raw) {
+    part.el.textContent = "";
+    return;
+  }
+  if (!shouldStreamRenderMarkdown(raw)) {
+    part.el.textContent = raw;
+    part.el.classList.remove("rendered");
+    autoScrollIfNear();
+    return;
+  }
+  part.el.classList.add("rendered");
+  part.el.innerHTML = renderMarkdown(raw);
+  autoScrollIfNear();
+}
+
+function scheduleStreamingTextRender(part, { force = false } = {}) {
+  if (!part || !part.el) return;
+  if (force) {
+    if (part.renderHandle) {
+      window.clearTimeout(part.renderHandle);
+      part.renderHandle = null;
+    }
+    renderStreamingTextPart(part);
+    return;
+  }
+  if (part.renderHandle) return;
+  part.renderHandle = window.setTimeout(() => {
+    renderStreamingTextPart(part);
+  }, streamRenderDelay(part.raw));
+}
+
+function finalizeStreamingTextPart(part) {
+  if (!part || !part.el) return;
+  if (part.renderHandle) {
+    window.clearTimeout(part.renderHandle);
+    part.renderHandle = null;
+  }
+  const trimmed = (part.raw || "").trim();
+  if (!trimmed) {
+    part.el.textContent = "";
+    return;
+  }
+  part.el.classList.add("rendered");
+  part.el.innerHTML = renderMarkdown(trimmed);
+  enhanceRenderedContent(part.el);
+}
+
 let _msgIndex = 0;
 
 function setCopyButtonState(button, text) {
@@ -1081,19 +1147,21 @@ function _endOtherBlocks(bubble, keep) {
 function appendTextDelta(bubble, delta) {
   removeCursor(bubble);
   _endOtherBlocks(bubble, "text");
+  bubble.body.classList.add("rendered");
   if (!bubble.currentText) {
     const span = document.createElement("div");
     span.className = "stream-part";
     bubble.body.appendChild(span);
     bubble.currentText = span;
-    bubble.textParts.push({ el: span, raw: "" });
+    bubble.textParts.push({ el: span, raw: "", renderedRaw: "", renderHandle: null });
   }
-  bubble.textParts[bubble.textParts.length - 1].raw += delta;
+  const part = bubble.textParts[bubble.textParts.length - 1];
+  part.raw += delta;
   setCopyButtonState(
     bubble.copyBtn,
     bubble.textParts.map((part) => part.raw).join("\n\n"),
   );
-  bubble.currentText.appendChild(document.createTextNode(delta));
+  scheduleStreamingTextRender(part);
   ensureCursor(bubble);
   autoScrollIfNear();
 }
@@ -1446,11 +1514,7 @@ async function streamChat(text, files = []) {
         finalizeToolGroup(bubble);
         // 把每段原始文本用 markdown 渲染替换
         for (const part of bubble.textParts) {
-          const trimmed = part.raw.trim();
-          if (trimmed) {
-            part.el.innerHTML = renderMarkdown(trimmed);
-            enhanceRenderedContent(part.el);
-          }
+          finalizeStreamingTextPart(part);
         }
         bubble.body.classList.add("rendered");
         if (!bubble.body.textContent.trim()) {
@@ -1545,11 +1609,7 @@ async function streamChat(text, files = []) {
     finalizeToolGroup(bubble);
     if (!finished) {
       for (const part of bubble.textParts) {
-        const trimmed = part.raw.trim();
-        if (trimmed) {
-          part.el.innerHTML = renderMarkdown(trimmed);
-          enhanceRenderedContent(part.el);
-        }
+        finalizeStreamingTextPart(part);
       }
       bubble.body.classList.add("rendered");
       setSessionRunning(launchedSessionId, false);

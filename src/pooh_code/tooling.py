@@ -87,11 +87,42 @@ def _bwrap_available() -> bool:
     return shutil.which("bwrap") is not None
 
 
+@lru_cache(maxsize=1)
+def _linux_bwrap_usable() -> bool:
+    if not sys.platform.startswith("linux"):
+        return False
+    bwrap = shutil.which("bwrap")
+    if not bwrap:
+        return False
+    try:
+        probe = subprocess.run(
+            [
+                bwrap,
+                "--ro-bind", "/usr", "/usr",
+                "--ro-bind-try", "/bin", "/bin",
+                "--ro-bind-try", "/sbin", "/sbin",
+                "--ro-bind-try", "/lib", "/lib",
+                "--ro-bind-try", "/lib64", "/lib64",
+                "--ro-bind-try", "/etc", "/etc",
+                "--proc", "/proc",
+                "--dev", "/dev",
+                "/bin/sh", "-c", "true",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except Exception:
+        return False
+    return probe.returncode == 0
+
+
 def _build_sandboxed_bash(command: str, chdir: Path) -> tuple[list[str] | str, bool]:
     """按平台选择沙箱实现：
 
     - macOS → sandbox-exec + 自定义 profile(B 层)
     - Linux + bwrap 可用 → bubblewrap 新 mount namespace(B 层)
+    - Linux + bwrap 不可用 → 直接拒绝执行（fail-closed）
     - 其他 → 原样执行,只有 A 层(路径校验 + cwd 约束)
 
     返回 (argv_or_str, use_shell)。
@@ -102,7 +133,7 @@ def _build_sandboxed_bash(command: str, chdir: Path) -> tuple[list[str] | str, b
         profile = _SANDBOX_PROFILE_TEMPLATE.format(workplace=workplace)
         return ["sandbox-exec", "-p", profile, "/bin/sh", "-c", command], False
 
-    if sys.platform.startswith("linux") and _bwrap_available():
+    if sys.platform.startswith("linux") and _linux_bwrap_usable():
         # bwrap 创建新 mount namespace:
         # - /usr /bin /sbin /lib /lib64 /etc 只读绑定(系统工具链)
         # - workplace 读写绑定
@@ -127,6 +158,12 @@ def _build_sandboxed_bash(command: str, chdir: Path) -> tuple[list[str] | str, b
             "--chdir", str(chdir),
             "/bin/sh", "-c", command,
         ], False
+
+    if sys.platform.startswith("linux"):
+        raise RuntimeError(
+            "Linux sandbox requires bubblewrap (bwrap) with usable user namespace support. "
+            "Install bubblewrap and ensure bwrap can start successfully, otherwise bash is blocked."
+        )
 
     return command, True
 
