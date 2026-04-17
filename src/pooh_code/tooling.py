@@ -201,6 +201,18 @@ def _build_sandboxed_bash(command: str, chdir: Path) -> tuple[list[str] | str, b
     return command, True
 
 
+def _tool_env() -> dict[str, str]:
+    env = os.environ.copy()
+    path_entries = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
+    uv_path = shutil.which("uv")
+    if uv_path:
+        uv_dir = str(Path(uv_path).resolve().parent)
+        if uv_dir not in path_entries:
+            path_entries.insert(0, uv_dir)
+    env["PATH"] = os.pathsep.join(path_entries)
+    return env
+
+
 class ToolRegistry:
     def __init__(
         self,
@@ -518,6 +530,7 @@ class ToolRegistry:
             text=True,
             capture_output=True,
             timeout=timeout,
+            env=_tool_env(),
         )
         stdout = completed.stdout.strip()
         stderr = completed.stderr.strip()
