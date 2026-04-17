@@ -94,6 +94,13 @@ def _linux_bwrap_usable() -> bool:
     bwrap = shutil.which("bwrap")
     if not bwrap:
         return False
+    workplace = str(WORKPLACE_DIR.resolve())
+    project_root = str(WORKPLACE_DIR.parent.resolve())
+    uv_path = shutil.which("uv")
+    uv_mount: list[str] = []
+    if uv_path:
+        uv_parent = str(Path(uv_path).resolve().parent.parent)
+        uv_mount = ["--ro-bind-try", uv_parent, uv_parent]
     try:
         probe = subprocess.run(
             [
@@ -103,9 +110,19 @@ def _linux_bwrap_usable() -> bool:
                 "--ro-bind-try", "/sbin", "/sbin",
                 "--ro-bind-try", "/lib", "/lib",
                 "--ro-bind-try", "/lib64", "/lib64",
-                "--ro-bind-try", "/etc", "/etc",
+                "--tmpfs", "/etc",
+                "--dir", "/etc/ssl",
+                "--ro-bind-try", "/etc/ssl/certs", "/etc/ssl/certs",
+                "--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
+                "--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf",
+                "--ro-bind-try", "/etc/hosts", "/etc/hosts",
+                "--ro-bind-try", "/etc/nsswitch.conf", "/etc/nsswitch.conf",
+                "--ro-bind-try", project_root, project_root,
+                *uv_mount,
+                "--bind", workplace, workplace,
                 "--proc", "/proc",
                 "--dev", "/dev",
+                "--share-net",
                 "/bin/sh", "-c", "true",
             ],
             capture_output=True,
@@ -136,9 +153,17 @@ def _build_sandboxed_bash(command: str, chdir: Path) -> tuple[list[str] | str, b
     if sys.platform.startswith("linux") and _linux_bwrap_usable():
         # bwrap 创建新 mount namespace:
         # - /usr /bin /sbin /lib /lib64 /etc 只读绑定(系统工具链)
+        # - 仅挂载运行命令所需的最小 /etc 文件(不暴露整个 /etc)
+        # - 项目根目录只读绑定(保证 uv / .venv / pyproject 可见)
         # - workplace 读写绑定
         # - /tmp 用私有 tmpfs 隔离
         # - 保留网络(--share-net),方便 web_search/pip 等
+        project_root = str(WORKPLACE_DIR.parent.resolve())
+        uv_path = shutil.which("uv")
+        uv_mount: list[str] = []
+        if uv_path:
+            uv_parent = str(Path(uv_path).resolve().parent.parent)
+            uv_mount = ["--ro-bind-try", uv_parent, uv_parent]
         return [
             "bwrap",
             "--ro-bind", "/usr", "/usr",
@@ -146,7 +171,15 @@ def _build_sandboxed_bash(command: str, chdir: Path) -> tuple[list[str] | str, b
             "--ro-bind-try", "/sbin", "/sbin",
             "--ro-bind-try", "/lib", "/lib",
             "--ro-bind-try", "/lib64", "/lib64",
-            "--ro-bind-try", "/etc", "/etc",
+            "--tmpfs", "/etc",
+            "--dir", "/etc/ssl",
+            "--ro-bind-try", "/etc/ssl/certs", "/etc/ssl/certs",
+            "--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
+            "--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf",
+            "--ro-bind-try", "/etc/hosts", "/etc/hosts",
+            "--ro-bind-try", "/etc/nsswitch.conf", "/etc/nsswitch.conf",
+            "--ro-bind-try", project_root, project_root,
+            *uv_mount,
             "--bind", workplace, workplace,
             "--tmpfs", "/tmp",
             "--proc", "/proc",
