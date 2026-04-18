@@ -203,6 +203,26 @@
     </div>
   </div>
 
+  <div class="image-lightbox hidden" id="image-lightbox" aria-hidden="true">
+    <button class="image-lightbox-close" id="image-lightbox-close" type="button" aria-label="关闭图片预览">×</button>
+    <div class="image-lightbox-dialog" id="image-lightbox-dialog" role="dialog" aria-modal="true" aria-label="图片预览">
+      <div class="image-lightbox-frame">
+        <img id="image-lightbox-img" alt="" />
+      </div>
+      <div class="image-lightbox-meta">
+        <div class="image-lightbox-name" id="image-lightbox-name">—</div>
+        <div class="image-lightbox-note">点击空白处或按 Esc 关闭</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="selection-quote hidden" id="selection-quote" aria-hidden="true">
+    <button class="selection-quote-btn" id="selection-quote-btn" type="button" aria-label="引用选中文本">
+      <span class="selection-quote-mark">❝</span>
+      <span>引用到输入框</span>
+    </button>
+  </div>
+
   <script src="/static/vendor/highlight.common.min.js"></script>
   <script src="/static/vendor/beautify.min.js"></script>
   <script src="/static/vendor/beautify-html.min.js"></script>

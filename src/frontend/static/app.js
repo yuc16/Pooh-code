@@ -47,6 +47,13 @@ const els = {
   mmCanvas: $("#mm-canvas"),
   mmViewport: $("#mm-viewport"),
   btnMinimapJump: $("#btn-minimap-jump"),
+  imageLightbox: $("#image-lightbox"),
+  imageLightboxDialog: $("#image-lightbox-dialog"),
+  imageLightboxImg: $("#image-lightbox-img"),
+  imageLightboxName: $("#image-lightbox-name"),
+  imageLightboxClose: $("#image-lightbox-close"),
+  selectionQuote: $("#selection-quote"),
+  selectionQuoteBtn: $("#selection-quote-btn"),
 };
 
 // ─── Agent status banner ───
@@ -148,6 +155,8 @@ let state = {
   openConvos: new Set(),
   sessionFilter: "",
   replyCtx: null, // { who, text }
+  selectionQuote: null,
+  selectionDragging: false,
 };
 
 const COLS_KEY = "pooh.cols.v1";
@@ -717,30 +726,24 @@ function createMessageShell(role, { msgId = null, who = null, time = null } = {}
         <span class="who">${escapeHtml(whoLabel)}</span>
       </div>` : ""}
       <div class="body"></div>
+      <div class="msg-attachments"></div>
       <div class="msg-downloads"></div>
       ${canAct ? `
       <div class="msg-tools">
-        <button class="msg-quote" type="button" title="引用此消息">引用</button>
         <button class="msg-copy" type="button" title="复制消息">复制</button>
         <span class="msg-time">${escapeHtml(timeText)}</span>
       </div>` : ""}
     </div>
   `;
   const body = root.querySelector(".body");
+  const attachments = root.querySelector(".msg-attachments");
   const copyBtn = root.querySelector(".msg-copy");
-  const quoteBtn = root.querySelector(".msg-quote");
   const downloads = root.querySelector(".msg-downloads");
   if (copyBtn) {
     setCopyButtonState(copyBtn, "");
     attachCopyHandler(copyBtn);
   }
-  if (quoteBtn) {
-    quoteBtn.addEventListener("click", () => {
-      const text = copyBtn?.dataset.copyText || body.textContent || "";
-      setReplyCtx({ who: whoLabel, text });
-    });
-  }
-  return { root, body, copyBtn, quoteBtn, downloads };
+  return { root, body, attachments, copyBtn, downloads };
 }
 
 function _renderUserBodyWithQuote(shell, text) {
@@ -753,16 +756,122 @@ function _renderUserBodyWithQuote(shell, text) {
     bubble.insertBefore(q, shell.body);
     shell.body.textContent = parsed.body;
     shell.body.classList.remove("rendered");
+    shell.body.classList.toggle("empty", !String(parsed.body || "").trim());
   } else {
     const renderedText = normalizeUserMarkdown(text);
-    shell.body.classList.add("rendered");
-    shell.body.innerHTML = renderMarkdown(renderedText);
-    enhanceRenderedContent(shell.body);
+    if (renderedText.trim()) {
+      shell.body.classList.add("rendered");
+      shell.body.classList.remove("empty");
+      shell.body.innerHTML = renderMarkdown(renderedText);
+      enhanceRenderedContent(shell.body);
+    } else {
+      shell.body.classList.remove("rendered");
+      shell.body.classList.add("empty");
+      shell.body.innerHTML = "";
+    }
   }
-  setCopyButtonState(shell.copyBtn, text);
 }
 
-function appendMessage(role, text, { scroll = true } = {}) {
+function buildMessageCopyText(text, attachments = []) {
+  const lines = [];
+  const normalized = typeof text === "string" ? text.trim() : "";
+  if (normalized) lines.push(normalized);
+  for (const attachment of attachments || []) {
+    if (!attachment) continue;
+    const name = String(attachment.name || "").trim() || "未命名附件";
+    lines.push(`${attachment.kind === "image" ? "[图片]" : "[文件]"} ${name}`);
+  }
+  return lines.join("\n").trim();
+}
+
+function renderMessageAttachments(shell, attachments = []) {
+  if (!shell?.attachments) return;
+  const items = Array.isArray(attachments) ? attachments.filter(Boolean) : [];
+  shell.attachments.innerHTML = "";
+  shell.attachments.dataset.count = String(items.length);
+  if (!items.length) return;
+
+  for (const attachment of items) {
+    const name = String(attachment.name || "").trim() || "未命名附件";
+    const kind = attachment.kind || (_artifactType(name) === "image" ? "image" : "file");
+    const meta = attachment.size ? _humanSize(attachment.size) : "";
+
+    if (kind === "image" && attachment.url) {
+      const card = document.createElement("a");
+      card.className = "msg-attachment-card is-image";
+      card.href = attachment.url;
+      card.target = "_blank";
+      card.rel = "noreferrer";
+      card.innerHTML = `
+        <div class="msg-attachment-media">
+          <img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(name)}" loading="lazy" />
+        </div>
+        <div class="msg-attachment-caption">
+          <span class="msg-attachment-badge">图片</span>
+          <div class="msg-attachment-texts">
+            <span class="msg-attachment-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+            ${meta ? `<span class="msg-attachment-meta">${escapeHtml(meta)}</span>` : ""}
+          </div>
+        </div>
+      `;
+      card.addEventListener("click", (e) => {
+        e.preventDefault();
+        openImageLightbox({
+          url: attachment.url,
+          name,
+        });
+      });
+      shell.attachments.appendChild(card);
+      continue;
+    }
+
+    const card = document.createElement("div");
+    card.className = "msg-attachment-card is-file";
+    card.innerHTML = `
+      <div class="msg-attachment-file-icon">${escapeHtml(_fileIcon(name))}</div>
+      <div class="msg-attachment-texts">
+        <span class="msg-attachment-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+        ${meta ? `<span class="msg-attachment-meta">${escapeHtml(meta)}</span>` : ""}
+      </div>
+    `;
+    shell.attachments.appendChild(card);
+  }
+}
+
+function buildPendingMessageAttachments(files = []) {
+  return files.map((item) => {
+    const name = String(item.name || "").trim();
+    const kind = _artifactType(name) === "image" ? "image" : "file";
+    return {
+      kind,
+      name,
+      size: item.size || item.file?.size || 0,
+      url: kind === "image" ? (item.previewUrl || "") : "",
+    };
+  }).filter((item) => item.kind !== "image" || item.url);
+}
+
+function openImageLightbox({ url, name = "" } = {}) {
+  if (!els.imageLightbox || !els.imageLightboxImg) return;
+  if (!url) return;
+  els.imageLightboxImg.src = url;
+  els.imageLightboxImg.alt = name || "图片预览";
+  if (els.imageLightboxName) els.imageLightboxName.textContent = name || "图片预览";
+  els.imageLightbox.classList.remove("hidden");
+  els.imageLightbox.setAttribute("aria-hidden", "false");
+  document.body.classList.add("lightbox-open");
+}
+
+function closeImageLightbox() {
+  if (!els.imageLightbox || !els.imageLightboxImg) return;
+  els.imageLightbox.classList.add("hidden");
+  els.imageLightbox.setAttribute("aria-hidden", "true");
+  els.imageLightboxImg.removeAttribute("src");
+  els.imageLightboxImg.alt = "";
+  document.body.classList.remove("lightbox-open");
+}
+
+function appendMessage(role, text, { scroll = true, attachments = [] } = {}) {
   syncIntroMode(true);
   const shell = createMessageShell(role, { msgId: `m-${_msgIndex++}`, time: new Date() });
   if (role === "user") {
@@ -777,6 +886,8 @@ function appendMessage(role, text, { scroll = true } = {}) {
     shell.body.innerHTML = renderMarkdown(text);
     enhanceRenderedContent(shell.body);
   }
+  renderMessageAttachments(shell, attachments);
+  setCopyButtonState(shell.copyBtn, buildMessageCopyText(text, attachments));
   els.chatInner.appendChild(shell.root);
   if (scroll) els.messages.scrollTop = els.messages.scrollHeight;
   scheduleMinimapRebuild();
@@ -805,23 +916,25 @@ function buildHistoryMessageNode(message) {
       if (!sp.children.length && !sp.textContent.trim()) sp.remove();
     });
 
-    setCopyButtonState(shell.copyBtn, message.text || shell.body.textContent || "");
+    renderMessageAttachments(shell, message.attachments || []);
+    setCopyButtonState(shell.copyBtn, buildMessageCopyText(message.text || shell.body.textContent || "", message.attachments || []));
     return shell.root;
   }
-  if (message.text && message.text.trim()) {
+  if ((message.text && message.text.trim()) || (message.attachments || []).length) {
     const shell = createMessageShell(message.role, { msgId: `m-${_msgIndex++}` });
     if (message.role === "user") {
-      _renderUserBodyWithQuote(shell, message.text);
+      _renderUserBodyWithQuote(shell, message.text || "");
     } else if (message.role === "assistant") {
       shell.body.classList.add("rendered");
-      shell.body.innerHTML = renderMarkdown(message.text);
+      shell.body.innerHTML = renderMarkdown(message.text || "");
       enhanceRenderedContent(shell.body);
-      setCopyButtonState(shell.copyBtn, message.text);
     } else {
       shell.body.classList.add("rendered");
-      shell.body.innerHTML = renderMarkdown(message.text);
+      shell.body.innerHTML = renderMarkdown(message.text || "");
       enhanceRenderedContent(shell.body);
     }
+    renderMessageAttachments(shell, message.attachments || []);
+    setCopyButtonState(shell.copyBtn, buildMessageCopyText(message.text || "", message.attachments || []));
     return shell.root;
   }
   return null;
@@ -1736,8 +1849,9 @@ async function sendMessage(text) {
     composed = `[引用: "${escaped}"]\n\n${text}`;
   }
 
-  const filePaths = state.pendingFiles.map((f) => f.serverPath);
-  const fileNames = state.pendingFiles.map((f) => f.name);
+  const pendingFiles = [...state.pendingFiles];
+  const filePaths = pendingFiles.map((f) => f.serverPath);
+  const attachments = buildPendingMessageAttachments(pendingFiles);
   state.pendingFiles = [];
   renderFilePreview();
   clearReplyCtx();
@@ -1774,10 +1888,7 @@ async function sendMessage(text) {
     return;
   }
 
-  const displayText = fileNames.length
-    ? composed + "\n" + fileNames.map((n) => `[${_fileIcon(n)} ${n}]`).join(" ")
-    : composed;
-  appendMessage("user", displayText);
+  appendMessage("user", composed, { attachments });
   setSessionRunning(launchedSessionId, true);
   agentStatus.set("busy", "已提交消息", "正在建立到 Agent 的流式连接…");
   try {
@@ -1846,6 +1957,99 @@ function clearReplyCtx() {
 }
 
 els.replyCtxClear?.addEventListener("click", clearReplyCtx);
+
+function _selectionNodeToElement(node) {
+  if (!node) return null;
+  return node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+}
+
+function _whoForRole(role) {
+  if (role === "user") return "你";
+  if (role === "assistant") return "Pooh Code";
+  return "系统";
+}
+
+function hideSelectionQuoteAction() {
+  state.selectionQuote = null;
+  if (!els.selectionQuote) return;
+  els.selectionQuote.classList.add("hidden");
+  els.selectionQuote.setAttribute("aria-hidden", "true");
+}
+
+function getSelectionQuoteCandidate() {
+  const sel = window.getSelection?.();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const rawText = sel.toString();
+  const text = rawText.replace(/\s+/g, " ").trim();
+  if (!text) return null;
+
+  const range = sel.getRangeAt(0);
+  const startEl = _selectionNodeToElement(range.startContainer);
+  const endEl = _selectionNodeToElement(range.endContainer);
+  if (!startEl || !endEl) return null;
+  if (els.input?.contains(startEl) || els.input?.contains(endEl)) return null;
+
+  const startMsg = startEl.closest(".msg");
+  const endMsg = endEl.closest(".msg");
+  if (!startMsg || startMsg !== endMsg) return null;
+  if (!els.messages?.contains(startMsg)) return null;
+  if (startEl.closest(".msg-tools") || endEl.closest(".msg-tools")) return null;
+
+  const rect = range.getBoundingClientRect();
+  if (!rect || (!rect.width && !rect.height)) return null;
+
+  return {
+    text,
+    who: _whoForRole(startMsg.getAttribute("data-role") || ""),
+    rect,
+  };
+}
+
+function showSelectionQuoteAction(candidate) {
+  if (!els.selectionQuote || !candidate) return;
+  state.selectionQuote = { who: candidate.who, text: candidate.text };
+  els.selectionQuote.classList.remove("hidden");
+  els.selectionQuote.setAttribute("aria-hidden", "false");
+
+  const rect = candidate.rect;
+  const pop = els.selectionQuote;
+  const width = pop.offsetWidth || 180;
+  const height = pop.offsetHeight || 44;
+  const centerX = rect.left + rect.width / 2;
+  const minX = 16 + width / 2;
+  const maxX = window.innerWidth - 16 - width / 2;
+  const left = Math.max(minX, Math.min(maxX, centerX));
+  const showAbove = rect.top > height + 24;
+
+  pop.style.left = `${left}px`;
+  if (showAbove) {
+    pop.dataset.place = "top";
+    pop.style.top = `${Math.max(12, rect.top - 12)}px`;
+  } else {
+    pop.dataset.place = "bottom";
+    pop.style.top = `${Math.min(window.innerHeight - height - 12, rect.bottom + 12)}px`;
+  }
+}
+
+function syncSelectionQuoteAction() {
+  if (state.selectionDragging) return;
+  const candidate = getSelectionQuoteCandidate();
+  if (!candidate) {
+    hideSelectionQuoteAction();
+    return;
+  }
+  showSelectionQuoteAction(candidate);
+}
+
+els.selectionQuoteBtn?.addEventListener("click", () => {
+  if (!state.selectionQuote) return;
+  setReplyCtx(state.selectionQuote);
+  hideSelectionQuoteAction();
+  try {
+    window.getSelection?.().removeAllRanges();
+  } catch (_) {}
+});
+els.selectionQuoteBtn?.addEventListener("mousedown", (e) => e.preventDefault());
 
 // ─── Minimap ───
 let minimapRebuildHandle = null;
@@ -1925,7 +2129,7 @@ function renderFilePreview() {
     if (isImage) {
       const thumb = document.createElement("img");
       thumb.className = "fp-thumb";
-      thumb.src = URL.createObjectURL(f.file);
+      thumb.src = f.previewUrl || URL.createObjectURL(f.file);
       item.appendChild(thumb);
     } else {
       const icon = document.createElement("span");
@@ -1979,6 +2183,8 @@ async function addFiles(fileList) {
         file: fileList[i],
         serverPath: saved[i].path,
         name: saved[i].name,
+        size: saved[i].size || fileList[i].size || 0,
+        previewUrl: fileList[i].type.startsWith("image/") ? URL.createObjectURL(fileList[i]) : "",
       });
     }
     renderFilePreview();
@@ -2095,10 +2301,36 @@ els.scrollBtn?.addEventListener("click", () => {
   els.messages.scrollTo({ top: els.messages.scrollHeight, behavior: "smooth" });
 });
 
+els.imageLightboxClose?.addEventListener("click", closeImageLightbox);
+els.imageLightbox?.addEventListener("click", (e) => {
+  if (e.target === els.imageLightbox) closeImageLightbox();
+});
+els.imageLightboxDialog?.addEventListener("click", (e) => e.stopPropagation());
+
 els.messages?.addEventListener("scroll", () => {
+  hideSelectionQuoteAction();
   const gap = els.messages.scrollHeight - els.messages.scrollTop - els.messages.clientHeight;
   els.scrollBtn?.classList.toggle("hidden", gap < 200);
 });
+
+els.messages?.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  state.selectionDragging = true;
+  hideSelectionQuoteAction();
+});
+
+document.addEventListener("selectionchange", () => {
+  if (state.selectionDragging) return;
+  window.requestAnimationFrame(syncSelectionQuoteAction);
+});
+
+document.addEventListener("pointerup", () => {
+  if (!state.selectionDragging) return;
+  state.selectionDragging = false;
+  window.setTimeout(syncSelectionQuoteAction, 0);
+});
+
+window.addEventListener("resize", hideSelectionQuoteAction);
 
 els.sessionSearch?.addEventListener("input", () => {
   state.sessionFilter = els.sessionSearch.value;
@@ -2119,6 +2351,19 @@ document.querySelectorAll(".chip[data-cmd]").forEach((chip) => {
 
 // Keyboard shortcuts
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && els.selectionQuote && !els.selectionQuote.classList.contains("hidden")) {
+    e.preventDefault();
+    hideSelectionQuoteAction();
+    try {
+      window.getSelection?.().removeAllRanges();
+    } catch (_) {}
+    return;
+  }
+  if (e.key === "Escape" && els.imageLightbox && !els.imageLightbox.classList.contains("hidden")) {
+    e.preventDefault();
+    closeImageLightbox();
+    return;
+  }
   const isMod = e.metaKey || e.ctrlKey;
   if (isMod && e.key.toLowerCase() === "k") {
     e.preventDefault();

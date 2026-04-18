@@ -139,6 +139,10 @@ def _extract_text_only(content: Any) -> str:
         return content
     if isinstance(content, list):
         chunks: list[str] = []
+        has_image_block = any(
+            isinstance(block, dict) and block.get("type") == "image"
+            for block in content
+        )
         has_text_block = any(
             isinstance(block, dict)
             and block.get("type") == "text"
@@ -150,6 +154,8 @@ def _extract_text_only(content: Any) -> str:
                 block_type = block.get("type")
                 if block_type == "text":
                     text = str(block.get("text", ""))
+                    if has_image_block and re.match(r"^\s*🖼️\s*图片文件:", text):
+                        continue
                     if text:
                         chunks.append(text)
                 elif block_type == "image" and not has_text_block:
@@ -162,6 +168,30 @@ def _extract_text_only(content: Any) -> str:
                 chunks.append(str(block))
         return "\n".join(chunks)
     return json.dumps(content, ensure_ascii=False, default=str)
+
+
+def _extract_attachments(content: Any) -> list[dict[str, Any]]:
+    if not isinstance(content, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") != "image":
+            continue
+        data = str(block.get("data", "")).strip()
+        if not data:
+            continue
+        media_type = str(block.get("media_type", "")).strip() or "image/png"
+        items.append(
+            {
+                "kind": "image",
+                "name": str(block.get("filename", "")).strip() or "已上传图片",
+                "media_type": media_type,
+                "url": f"data:{media_type};base64,{data}",
+            }
+        )
+    return items
 
 
 def _extract_tool_blocks(content: Any) -> list[dict[str, Any]]:
@@ -213,7 +243,11 @@ def _serialize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             text = _extract_text_only(content)
             if not text.strip() and tool_blocks:
                 continue
-            out.append({"role": role, "text": text})
+            entry: dict[str, Any] = {"role": role, "text": text}
+            attachments = _extract_attachments(content)
+            if attachments:
+                entry["attachments"] = attachments
+            out.append(entry)
             continue
 
         if role == "assistant":
