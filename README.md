@@ -231,19 +231,24 @@ Web 端走「邮箱 + 密码」账号体系，每个用户自己的 `session_key
 - **暖调米白书卷气主题**（Newsreader 衬线 + Geist 无衬线 + JetBrains Mono 等宽 + 琥珀 accent），基于 oklch 色彩空间的低饱和度米白纸张配色，不再提供深色主题切换
 - **三栏布局**：左侧会话栏（2fr）/ 中间聊天区（7fr）/ 右侧 Minimap（1fr）；两条 `col-divider` 分隔条可鼠标拖拽调整三栏比例，结果持久化到 `localStorage.pooh.cols.v1`
 - 左侧栏：顶部是品牌 logo + 刷新按钮 + 搜索框（⌘K 聚焦）+ "新建会话"按钮（⌘N 新建）、会话列表（`.convo` 行）、底部用户卡片（头像 + 邮箱 + 退出按钮）
-- 每个会话条目 `.convo`：中文标题 + 相对时间 + 产物数 + **每会话 token 进度条**（从后端 `list_sessions` 返回的 `usage` 字段渲染，≥75% 转为红色警示），**点击标题可展开内嵌的产物列表**（来自 `/api/files` 对应 `session_id` 分组，每条可直接点击下载），再次点击切换收起
+- 每个会话条目 `.convo`：**紧凑单行**布局——标题 + 时间（右对齐贴到 token 进度条右缘）同一行，下方一条 token 进度条（来自 `list_sessions` 返回的 `usage` 字段，≥75% 转为红色警示），**不再显示"N 产物"徽标**以减少视觉噪音；**点击标题可展开内嵌的产物列表**（来自 `/api/files` 对应 `session_id` 分组，每条可直接点击下载），再次点击切换收起
 - 会话列表按日期分组（今天 / 昨天 / N 天前 / 年月），只显示 web channel 下的会话（不混入 cli / feishu）；搜索框可按标题或 `session_id` 实时过滤
 - **双击标题**可直接重命名（Enter 确认，Escape 取消），修改后写入 `sessions.json`
 - hover 会话时右侧出现 `✕` 删除按钮，确认后同步删除 [workplace/runtime/sessions/main/web/&lt;session_id&gt;/transcript.jsonl](/Users/wangyc/Desktop/projects/Pooh-code/workplace/runtime/sessions/main/web) 、索引记录，以及 [workplace/output/&lt;session_id&gt;](/Users/wangyc/Desktop/projects/Pooh-code/workplace/output) 下对应的产物目录；如果删的是最后一条会自动新建一条空白会话
-- 中间栏顶栏：当前会话标题、model 徽章（带呼吸灯 pulse，`busy` 态橙色脉动、`err` 态红色）、"压缩上下文"按钮（等价于 `/compact`）、"停止"按钮
-- 右侧 Minimap：把聊天区域按 `scale` 缩放后绘制成 mini 预览，支持点击跳转、拖拽 viewport 滚动，顶部按钮可一键回到底部
+- 中间栏顶栏：**当前会话标题**（优先展示 `label`，未命名时 fallback 到 `session_id` 前 8 位；**不再有 `—` 分隔符**）；**双击标题可直接在顶栏重命名**（与左栏双击行为一致，写入 `sessions.json` 后同步刷新）；model 徽章（带呼吸灯 pulse，`busy` 态橙色脉动、`err` 态红色）、"压缩上下文"按钮（等价于 `/compact`）、"停止"按钮
+- 右侧 Minimap 已重构为**当前会话的用户提问导航列表**：只列出 `.msg.u`（用户消息），以带序号 + 问题摘要的导航条呈现，点击跳转到该消息；滚动时自动高亮当前可见的问题作为 active 项。相比旧的"缩放预览 + 拖拽 viewport"方案，导航更清晰、可读、更像侧边目录
 - **主页面 Agent 状态面板**：顶栏下方常驻一条高可见度状态条，把 Agent 当前在做什么实时外显：
   - 状态等级按颜色区分——`idle`（灰）/ `busy`（蓝）/ `thinking` 推理中（紫）/ `tool` 工具调用（橙）/ `error`（红），每个级别配独立的标题、详情文本和秒级计时器
   - 事件粒度映射到 SSE 流：`turn_start` → "第 N 轮"、`reasoning_delta` → "思考中 · 模型正在进行推理"、`tool_use_started`/`tool_use_done` → "调用/执行工具: &lt;name&gt;"、`tool_result` → "工具已返回"、`text_delta` → "生成回复中"、`done` → "完成"、`cancelled` → "已取消"、`truncated` → "已截断"、`compacted` → "上下文已压缩"
   - 运行 slash 命令（例如 `/compact`）时也有独立反馈：成功显示「命令完成」，失败则明确提示「当前会话仍在运行中，请先点击停止或等待本轮完成」——解决之前用户不知道为何命令没反应的问题
   - 兜底机制：即便 SSE 流提前关闭未收到 `done` 事件，前端也会在 `finally` 里强制把「思考中」落定为「已思考」并用已接收到的文本渲染 Markdown，避免"agent 已回答完但前端卡在思考中需要手动刷新"的旧 bug
   - 8 秒无事件会追加"响应延迟较高，已等候 Xs"提示，让用户知道不是前端卡了
-- 主聊天区：user / assistant / system 三种气泡（`.msg.u` / `.msg.a` / `.msg.s`），头像 + 衬线体角色名 + 正文；user 气泡使用琥珀色（`accent-weak`）背景方形 bubble，assistant/system 使用米白底；hover 消息时气泡下方出现 `引用 / 复制` 两个操作按钮——点击「引用」会把原文作为 `> quote` 填到输入框上方的引用条
+- 主聊天区：user / assistant / system 三种气泡（`.msg.u` / `.msg.a` / `.msg.s`）
+  - **user 气泡**：保留头像 + 衬线体"你"角色名，正文放在柔和的米白 → 淡琥珀渐变 bubble 内（无硬边框，只有极淡的内阴影和 1px 微光边），不再是旧版那种突兀的"琥珀色方块"
+  - **assistant / system 气泡**：**不再显示头像与"Pooh Code / 系统"角色名**，回答内容直接贴左呈现——减少视觉干扰，让阅读焦点始终在正文上
+  - hover 消息时气泡下方出现一行 `引用 / 复制 / 时间戳` 操作条：点击「引用」把原文以 `[引用: "..."]\n\n` 的**纯文本前缀**注入输入框（保留原样，不再强行 Markdown 化成 `> blockquote`），发送后在对方气泡里会以**独立 DOM 节点 `.quote`**（左侧淡琥珀竖线 + 灰色正文，**不显示"你"角色名**）渲染，避免引用块被 Markdown 解析器误判为代码块
+  - 时间戳列在 `引用 / 复制` 同一行，新消息显示 `HH:MM`（跨日则显示 `MM-DD HH:MM`）；历史消息因 transcript 暂未透传 `ts` 给前端，默认留空
+  - **生成的文件下载按钮**现在统一落在 assistant 气泡正文的**最末端**（独立的 `.msg-downloads` 容器，不再内嵌在"已思考"折叠块下方），让用户点完思考区、再看到下载入口更符合阅读顺序
 - 输入框：Enter 发送，Shift+Enter 换行，⌘↵ 发送；textarea 高度自动增长；附件栏与引用条会自动收起/展开；composer 下方一排 chip 提供 `/help` `/skills` `/clear` `/compact` 快捷命令（点击会把命令回填到输入框以便进一步编辑）；**agent 运行时输入框保持可用**——用户可随时输入并发送「插话」消息（走 `POST /api/session/inject`），消息会被推入运行中 session 的注入队列，agent 在当前工具执行完、下一轮 LLM 调用前自动读取并追加到 transcript，SSE 流会发一条 `injected` 事件通知前端（在助手气泡中内联显示琥珀色 USER 标签 + 插话内容）；placeholder 会切换为"继续发送消息，Agent 将在下一轮看到"提示；运行时也仍有 `停止` 按钮可用
 - 文件上传：输入框左侧的 📎 按钮或拖放文件到输入区域均可添加附件；支持图片（png/jpg/gif/webp）、视频（mp4/mov/avi/webm）、PDF、Office 文档（docx/xlsx/pptx）、CSV、纯文本等；附件会显示为预览条，可单独移除。各类型文件的处理方式：
   - **图片** → base64 编码直接发给多模态 LLM

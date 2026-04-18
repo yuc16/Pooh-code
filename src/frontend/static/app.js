@@ -278,6 +278,19 @@ function updateRunningUI() {
   }
 }
 
+function refreshChatTitle() {
+  if (!els.chatTitle) return;
+  if (els.chatTitle.querySelector(".chat-title-input")) return;
+  if (!state.sessionId) {
+    els.chatTitle.textContent = "开始一段新对话";
+    return;
+  }
+  const sess = (state.sessions || []).find((s) => s.session_id === state.sessionId);
+  const label = (sess && sess.label) || state.currentLabel || state.sessionId.slice(0, 8);
+  els.chatTitle.textContent = label;
+  els.chatTitle.title = "双击重命名会话";
+}
+
 function applyState(payload) {
   if (!payload) return;
   if (payload.session_id) {
@@ -297,11 +310,10 @@ function applyState(payload) {
   if (payload.capabilities) {
     state.capabilities = payload.capabilities;
   }
-  if (payload.label || payload.session_id) {
-    if (els.chatTitle) {
-      els.chatTitle.textContent = payload.label || (payload.session_id ? payload.session_id.slice(0, 8) : "开始一段新对话");
-    }
+  if (typeof payload.label === "string") {
+    state.currentLabel = payload.label;
   }
+  refreshChatTitle();
   updateRunningUI();
 }
 
@@ -607,8 +619,31 @@ function enhanceRenderedContent(container) {
   });
 }
 
+function _fmtClockTime(d) {
+  if (!d) return "";
+  const dt = d instanceof Date ? d : new Date(d);
+  if (isNaN(dt)) return "";
+  const today = new Date();
+  const sameDay = dt.getFullYear() === today.getFullYear()
+    && dt.getMonth() === today.getMonth()
+    && dt.getDate() === today.getDate();
+  const hh = String(dt.getHours()).padStart(2, "0");
+  const mm = String(dt.getMinutes()).padStart(2, "0");
+  if (sameDay) return `${hh}:${mm}`;
+  const mo = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${mo}-${dd} ${hh}:${mm}`;
+}
+
+function _extractQuote(text) {
+  const m = /^\[引用:\s*"((?:[^"\\]|\\.)*)"\]\r?\n\r?\n([\s\S]*)$/.exec(text || "");
+  if (!m) return null;
+  const quote = m[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  return { quote, body: m[2] };
+}
+
 // ─── Message rendering (avatar + bubble-head + body + msg-tools) ───
-function createMessageShell(role, { msgId = null, who = null } = {}) {
+function createMessageShell(role, { msgId = null, who = null, time = null } = {}) {
   const cls = role === "user" ? "u" : role === "assistant" ? "a" : "s";
   const root = document.createElement("div");
   root.className = `msg ${cls}`;
@@ -618,25 +653,30 @@ function createMessageShell(role, { msgId = null, who = null } = {}) {
   const whoLabel = who || (role === "user" ? "你" : role === "assistant" ? "Pooh Code" : "系统");
   const avatarLetter = role === "user" ? (whoLabel[0] || "Y") : (role === "assistant" ? "P" : "S");
   const canAct = role === "user" || role === "assistant";
+  const showHeader = role === "user";
+  const timeText = _fmtClockTime(time);
 
   root.innerHTML = `
-    <div class="avatar-sm">${escapeHtml(avatarLetter)}</div>
+    ${showHeader ? `<div class="avatar-sm">${escapeHtml(avatarLetter)}</div>` : ""}
     <div class="bubble">
+      ${showHeader ? `
       <div class="bubble-head">
         <span class="who">${escapeHtml(whoLabel)}</span>
-        <span class="time"></span>
-      </div>
+      </div>` : ""}
       <div class="body"></div>
+      <div class="msg-downloads"></div>
       ${canAct ? `
       <div class="msg-tools">
         <button class="msg-quote" type="button" title="引用此消息">引用</button>
         <button class="msg-copy" type="button" title="复制消息">复制</button>
+        <span class="msg-time">${escapeHtml(timeText)}</span>
       </div>` : ""}
     </div>
   `;
   const body = root.querySelector(".body");
   const copyBtn = root.querySelector(".msg-copy");
   const quoteBtn = root.querySelector(".msg-quote");
+  const downloads = root.querySelector(".msg-downloads");
   if (copyBtn) {
     setCopyButtonState(copyBtn, "");
     attachCopyHandler(copyBtn);
@@ -647,16 +687,36 @@ function createMessageShell(role, { msgId = null, who = null } = {}) {
       setReplyCtx({ who: whoLabel, text });
     });
   }
-  return { root, body, copyBtn, quoteBtn };
+  return { root, body, copyBtn, quoteBtn, downloads };
+}
+
+function _renderUserBodyWithQuote(shell, text) {
+  const parsed = _extractQuote(text);
+  const bubble = shell.root.querySelector(".bubble");
+  if (parsed) {
+    const q = document.createElement("div");
+    q.className = "quote";
+    q.textContent = parsed.quote;
+    bubble.insertBefore(q, shell.body);
+    shell.body.textContent = parsed.body;
+    shell.body.classList.remove("rendered");
+  } else {
+    const renderedText = normalizeUserMarkdown(text);
+    shell.body.classList.add("rendered");
+    shell.body.innerHTML = renderMarkdown(renderedText);
+    enhanceRenderedContent(shell.body);
+  }
+  setCopyButtonState(shell.copyBtn, text);
 }
 
 function appendMessage(role, text, { scroll = true } = {}) {
   syncIntroMode(true);
-  const shell = createMessageShell(role, { msgId: `m-${_msgIndex++}` });
-  if (role === "assistant" || role === "user") {
-    const renderedText = role === "user" ? normalizeUserMarkdown(text) : text;
+  const shell = createMessageShell(role, { msgId: `m-${_msgIndex++}`, time: new Date() });
+  if (role === "user") {
+    _renderUserBodyWithQuote(shell, text);
+  } else if (role === "assistant") {
     shell.body.classList.add("rendered");
-    shell.body.innerHTML = renderMarkdown(renderedText);
+    shell.body.innerHTML = renderMarkdown(text);
     enhanceRenderedContent(shell.body);
     setCopyButtonState(shell.copyBtn, text);
   } else {
@@ -681,17 +741,22 @@ function buildHistoryMessageNode(message) {
     shell.body.classList.add("rendered");
     shell.body.innerHTML = bodyHTML || renderMarkdown("(empty response)");
     enhanceRenderedContent(shell.body);
+
+    // Move download buttons from inside body to msg-downloads at the end
+    const bodyDownloads = shell.body.querySelectorAll(".file-download");
+    bodyDownloads.forEach((a) => shell.downloads.appendChild(a));
+    // Remove the now-empty inline download container (stream-part wrapping the anchors)
+    shell.body.querySelectorAll(".stream-part").forEach((sp) => {
+      if (!sp.children.length && !sp.textContent.trim()) sp.remove();
+    });
+
     setCopyButtonState(shell.copyBtn, message.text || shell.body.textContent || "");
     return shell.root;
   }
   if (message.text && message.text.trim()) {
     const shell = createMessageShell(message.role, { msgId: `m-${_msgIndex++}` });
-    if (message.role === "assistant" || message.role === "user") {
-      const renderedText = message.role === "user" ? normalizeUserMarkdown(message.text) : message.text;
-      shell.body.classList.add("rendered");
-      shell.body.innerHTML = renderMarkdown(renderedText);
-      enhanceRenderedContent(shell.body);
-      setCopyButtonState(shell.copyBtn, message.text);
+    if (message.role === "user") {
+      _renderUserBodyWithQuote(shell, message.text);
     } else {
       shell.body.innerHTML = renderInline(message.text);
     }
@@ -881,8 +946,9 @@ function _artifactIconSvg(type) {
 async function refreshSessions() {
   try {
     const data = await api("/api/sessions");
-    applyState(data);
     state.sessions = data.sessions || [];
+    applyState(data);
+    refreshChatTitle();
     renderSessionList();
   } catch (err) {
     agentStatus.set("error", "加载会话失败", err.message || "");
@@ -951,11 +1017,10 @@ function renderSessionList() {
           ${hasArtifacts ? `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>` : `<svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="opacity:0.3"><circle cx="12" cy="12" r="2"/></svg>`}
         </span>
         <div class="convo-meta">
-          <div class="convo-title" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
-          <div class="convo-sub">
-            <span>${escapeHtml(relTime)}</span>
-            ${hasArtifacts ? `<span class="dot"></span><span class="count">${artifactCount} 产物</span>` : ""}
-            ${item.running ? `<span class="dot"></span><span class="running">运行中</span>` : ""}
+          <div class="convo-row">
+            <div class="convo-title" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
+            ${item.running ? `<span class="convo-running">运行中</span>` : ""}
+            <span class="convo-time">${escapeHtml(relTime)}</span>
           </div>
           ${tokBarHTML}
         </div>
@@ -1054,10 +1119,54 @@ async function renameSession(sessionId, label) {
       method: "POST",
       body: { session_id: sessionId, label },
     });
+    if (sessionId === state.sessionId) state.currentLabel = label;
     await Promise.all([refreshSessions(), refreshFiles()]);
+    refreshChatTitle();
   } catch (err) {
     agentStatus.set("error", "重命名失败", err.message);
   }
+}
+
+function startRenameChatTitle() {
+  if (!els.chatTitle || !state.sessionId) return;
+  if (els.chatTitle.querySelector(".chat-title-input")) return;
+  const current = (els.chatTitle.textContent || "").trim();
+  const sess = (state.sessions || []).find((s) => s.session_id === state.sessionId);
+  const initialLabel = (sess && sess.label) || "";
+  const displayFallback = initialLabel || current || state.sessionId.slice(0, 8);
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "chat-title-input";
+  input.value = initialLabel || current;
+  input.placeholder = state.sessionId.slice(0, 8);
+
+  let cancelled = false;
+  const commit = async () => {
+    els.chatTitle.classList.remove("editing");
+    if (cancelled) {
+      els.chatTitle.textContent = displayFallback;
+      return;
+    }
+    const newLabel = input.value.trim();
+    if (newLabel === initialLabel) {
+      els.chatTitle.textContent = displayFallback;
+      return;
+    }
+    els.chatTitle.textContent = newLabel || state.sessionId.slice(0, 8);
+    await renameSession(state.sessionId, newLabel);
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+    if (e.key === "Escape") { cancelled = true; input.blur(); }
+  });
+  input.addEventListener("blur", commit);
+
+  els.chatTitle.classList.add("editing");
+  els.chatTitle.textContent = "";
+  els.chatTitle.appendChild(input);
+  input.focus();
+  input.select();
 }
 
 async function deleteSession(sessionId) {
@@ -1075,11 +1184,12 @@ async function deleteSession(sessionId) {
 
 // ─── Streaming bubble ───
 function createAssistantBubble() {
-  const shell = createMessageShell("assistant", { msgId: `m-${_msgIndex++}` });
+  const shell = createMessageShell("assistant", { msgId: `m-${_msgIndex++}`, time: new Date() });
   return {
     root: shell.root,
     body: shell.body,
     copyBtn: shell.copyBtn,
+    downloads: shell.downloads,
     currentText: null,
     textParts: [],
     toolBlocks: {},
@@ -1431,15 +1541,10 @@ async function streamChat(text, files = []) {
             bubble.textParts.map((p) => p.raw).join("\n\n") || evt.text || "",
           );
           if (bubble._pendingDownloads && bubble._pendingDownloads.length) {
-            const dlContainer = document.createElement("div");
-            dlContainer.className = "stream-part";
-            dlContainer.style.display = "flex";
-            dlContainer.style.flexWrap = "wrap";
-            dlContainer.style.gap = "8px";
+            const dlContainer = bubble.root.querySelector(".msg-downloads");
             for (const btn of bubble._pendingDownloads) {
               dlContainer.appendChild(btn);
             }
-            bubble.body.appendChild(dlContainer);
           }
           scheduleMinimapRebuild();
         }
@@ -1547,11 +1652,13 @@ async function sendMessage(text) {
     return;
   }
 
-  // If we have a reply-ctx, prepend as quote
+  // If we have a reply-ctx, prepend as plain-text quote marker
   let composed = text;
   if (state.replyCtx && state.replyCtx.text) {
-    const q = state.replyCtx.text.split("\n").map((l) => `> ${l}`).join("\n");
-    composed = `> **${state.replyCtx.who}**\n${q}\n\n${text}`;
+    const raw = state.replyCtx.text.replace(/\s+/g, " ").trim();
+    const snippet = raw.length > 240 ? raw.slice(0, 240) + "…" : raw;
+    const escaped = snippet.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    composed = `[引用: "${escaped}"]\n\n${text}`;
   }
 
   const filePaths = state.pendingFiles.map((f) => f.serverPath);
@@ -1612,8 +1719,14 @@ async function sendMessage(text) {
 async function newSession() {
   try {
     const data = await api("/api/session/new", { method: "POST" });
+    // Reset local filter so the new session is never hidden behind a stale search
+    if (els.sessionSearch) els.sessionSearch.value = "";
+    state.sessionFilter = "";
+    state.currentLabel = typeof data.label === "string" ? data.label : "";
     applyState(data);
-    await Promise.all([refreshMessages(), refreshSessions(), refreshFiles()]);
+    // Load sessions first so the list doesn't flicker to empty before /sessions returns
+    await refreshSessions();
+    await Promise.all([refreshMessages(), refreshFiles()]);
   } catch (err) {
     agentStatus.set("error", "新建会话失败", err.message);
   }
@@ -1665,116 +1778,58 @@ function scheduleMinimapRebuild() {
   });
 }
 
-let mmScale = 0.2;
-
 function rebuildMinimap() {
-  if (!els.mmCanvas || !els.mmInner) return;
+  if (!els.mmCanvas) return;
   const scroller = els.messages;
-  const mm = els.minimap;
-  if (!scroller || !mm) return;
-  const realH = Math.max(1, scroller.scrollHeight);
-  const realW = Math.max(1, scroller.clientWidth || els.chatInner.clientWidth || 800);
-  const mmW = mm.clientWidth - 16;
-  const mmH = mm.clientHeight - 16;
-  const scale = Math.min(mmW / realW, mmH / realH, 0.25);
-  mmScale = Math.max(0.05, scale);
-
-  els.mmCanvas.style.width = `${realW}px`;
-  els.mmCanvas.style.transform = `scale(${mmScale})`;
+  if (!scroller) return;
   els.mmCanvas.innerHTML = "";
 
-  const msgs = els.chatInner.querySelectorAll(".msg");
-  msgs.forEach((msgEl) => {
-    const role = msgEl.dataset.role || "assistant";
-    const cls = role === "user" ? "u" : role === "assistant" ? "a" : "s";
-    const mini = document.createElement("div");
-    mini.className = `mm-msg ${cls}`;
-    mini.style.position = "absolute";
-    mini.style.top = `${msgEl.offsetTop}px`;
-    mini.style.left = `0`;
-    mini.style.width = `${realW}px`;
-    mini.innerHTML = `<div class="mm-avatar"></div><div class="mm-bubble"></div>`;
-    const bubble = mini.querySelector(".mm-bubble");
-    const body = msgEl.querySelector(".body");
-    if (body) {
-      const blockCount = Math.max(2, Math.min(12, Math.ceil(body.textContent.length / 160)));
-      for (let i = 0; i < blockCount; i++) {
-        const line = document.createElement("div");
-        line.className = "mm-line" + (i === blockCount - 1 ? " mid" : "");
-        bubble.appendChild(line);
-      }
-      body.querySelectorAll(".thinking-group, .tool-block").forEach(() => {
-        const b = document.createElement("div");
-        b.className = "mm-block tool";
-        b.style.height = "24px";
-        bubble.appendChild(b);
-      });
-      body.querySelectorAll(".code-block").forEach(() => {
-        const b = document.createElement("div");
-        b.className = "mm-block code";
-        b.style.height = "40px";
-        bubble.appendChild(b);
-      });
-    }
-    mini.addEventListener("click", (e) => {
+  const userMsgs = els.chatInner.querySelectorAll(".msg.u");
+  if (!userMsgs.length) {
+    const empty = document.createElement("div");
+    empty.className = "mm-empty";
+    empty.textContent = "暂无提问";
+    els.mmCanvas.appendChild(empty);
+    return;
+  }
+
+  userMsgs.forEach((msgEl, idx) => {
+    const bodyEl = msgEl.querySelector(".body");
+    const raw = (bodyEl?.textContent || "").replace(/\s+/g, " ").trim();
+    const snippet = raw.length > 64 ? raw.slice(0, 64) + "…" : (raw || "（空）");
+    const item = document.createElement("div");
+    item.className = "mm-nav";
+    item.dataset.msgId = msgEl.dataset.msgId || "";
+    item.innerHTML = `<span class="mm-idx">${idx + 1}</span><span class="mm-text"></span>`;
+    item.querySelector(".mm-text").textContent = snippet;
+    item.title = raw || "";
+    item.addEventListener("click", (e) => {
       e.stopPropagation();
       const top = msgEl.offsetTop - 24;
       scroller.scrollTo({ top, behavior: "smooth" });
     });
-    els.mmCanvas.appendChild(mini);
+    els.mmCanvas.appendChild(item);
   });
-  els.mmCanvas.style.height = `${realH}px`;
-  updateMinimapViewport();
+  updateMinimapActive();
 }
 
-function updateMinimapViewport() {
-  if (!els.mmViewport) return;
+function updateMinimapActive() {
+  if (!els.mmCanvas) return;
   const scroller = els.messages;
   if (!scroller) return;
-  els.mmViewport.style.top = `${scroller.scrollTop * mmScale}px`;
-  els.mmViewport.style.height = `${scroller.clientHeight * mmScale}px`;
+  const threshold = scroller.scrollTop + 80;
+  const userMsgs = els.chatInner.querySelectorAll(".msg.u");
+  let activeIdx = -1;
+  userMsgs.forEach((m, i) => {
+    if (m.offsetTop <= threshold) activeIdx = i;
+  });
+  const items = els.mmCanvas.querySelectorAll(".mm-nav");
+  items.forEach((it, i) => it.classList.toggle("active", i === activeIdx));
 }
 
 function bindMinimap() {
   if (!els.minimap) return;
-
-  els.minimap.addEventListener("click", (e) => {
-    if (e.target.closest(".mm-viewport")) return;
-    if (e.target.closest(".mm-msg")) return;
-    const rect = els.minimap.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const scroller = els.messages;
-    scroller.scrollTo({
-      top: Math.max(0, y / mmScale - scroller.clientHeight / 2),
-      behavior: "smooth",
-    });
-  });
-
-  let dragging = false;
-  els.mmViewport?.addEventListener("pointerdown", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dragging = true;
-    els.mmViewport.classList.add("drag");
-    const startY = e.clientY;
-    const startScroll = els.messages.scrollTop;
-    els.mmViewport.setPointerCapture(e.pointerId);
-    const onMove = (ev) => {
-      if (!dragging) return;
-      els.messages.scrollTop = startScroll + (ev.clientY - startY) / mmScale;
-    };
-    const onUp = (ev) => {
-      dragging = false;
-      els.mmViewport.classList.remove("drag");
-      try { els.mmViewport.releasePointerCapture(e.pointerId); } catch (_) {}
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  });
-
-  els.messages.addEventListener("scroll", updateMinimapViewport);
+  els.messages.addEventListener("scroll", updateMinimapActive);
   window.addEventListener("resize", scheduleMinimapRebuild);
 }
 
@@ -1925,6 +1980,12 @@ els.btnStop?.addEventListener("click", async () => {
   } catch (err) {
     agentStatus.set("error", "取消失败", err.message);
   }
+});
+
+els.chatTitle?.addEventListener("dblclick", (e) => {
+  e.preventDefault();
+  if (!state.sessionId) return;
+  startRenameChatTitle();
 });
 
 els.btnMinimapJump?.addEventListener("click", () => {
