@@ -18,6 +18,7 @@ const els = {
   btnNew: $("#btn-new"),
   btnRefresh: $("#btn-refresh"),
   btnAttach: $("#btn-attach"),
+  btnImageMode: $("#btn-image-mode"),
   fileInput: $("#file-input"),
   filePreviewBar: $("#file-preview-bar"),
   sessionList: $("#session-list"),
@@ -157,6 +158,11 @@ let state = {
   replyCtx: null, // { who, text }
   selectionQuote: null,
   selectionDragging: false,
+  agentModel: "—",
+  imageModel: "gemini-3.1-flash-image-preview-free",
+  imageAspectRatio: "1:1",
+  imageMode: false,
+  imageGenerating: false,
 };
 
 const COLS_KEY = "pooh.cols.v1";
@@ -249,12 +255,43 @@ function setStatusPulse(kind) {
   else if (kind === "err") els.modelBadge.classList.add("err");
 }
 
+function refreshDisplayedModel() {
+  if (!els.modelLabel) return;
+  const label = state.imageMode ? (state.imageModel || "图片生成") : (state.agentModel || "—");
+  els.modelLabel.textContent = label;
+  els.modelBadge?.classList.toggle("image-mode", !!state.imageMode);
+}
+
+function refreshComposerPlaceholder() {
+  const currentBusy = !!(state.sessionId && state.runningSessions.has(state.sessionId));
+  if (!els.input) return;
+  if (state.imageGenerating) {
+    els.input.placeholder = "图片生成中，请稍候…";
+    return;
+  }
+  if (currentBusy) {
+    els.input.placeholder = "继续发送消息，Agent 将在下一轮看到…";
+    return;
+  }
+  els.input.placeholder = state.imageMode
+    ? "描述你想生成的图片…"
+    : "继续这段对话，或者拖拽文件到这里…";
+}
+
+function setImageMode(enabled) {
+  state.imageMode = !!enabled;
+  els.btnImageMode?.classList.toggle("active", state.imageMode);
+  refreshDisplayedModel();
+  refreshComposerPlaceholder();
+}
+
 function setBusy(busy, sessionId = state.sessionId) {
   if (!sessionId) {
-    els.btnSend.disabled = false;
+    els.btnSend.disabled = !!state.imageGenerating;
     els.btnStop.disabled = true;
     els.input.disabled = false;
     setStatusPulse("idle");
+    refreshComposerPlaceholder();
     return;
   }
   if (busy) state.runningSessions.add(sessionId);
@@ -271,13 +308,11 @@ function setSessionRunning(sessionId, running) {
 
 function updateRunningUI() {
   const currentBusy = !!(state.sessionId && state.runningSessions.has(state.sessionId));
-  els.btnSend.disabled = false;
+  els.btnSend.disabled = !!state.imageGenerating;
   els.btnStop.disabled = !currentBusy;
   els.input.disabled = false;
-  els.input.placeholder = currentBusy
-    ? "继续发送消息，Agent 将在下一轮看到…"
-    : "继续这段对话，或者拖拽文件到这里…";
-  if (currentBusy) {
+  refreshComposerPlaceholder();
+  if (state.imageGenerating || currentBusy) {
     setStatusPulse("busy");
   } else if (state.runningSessions.size > 0) {
     setStatusPulse("busy");
@@ -311,7 +346,11 @@ function applyState(payload) {
   }
   if (payload.session_key) state.sessionKey = payload.session_key;
   if (payload.model) {
-    if (els.modelLabel) els.modelLabel.textContent = payload.model;
+    state.agentModel = payload.model;
+  }
+  if (payload.image_generation) {
+    if (payload.image_generation.model) state.imageModel = payload.image_generation.model;
+    if (payload.image_generation.default_aspect_ratio) state.imageAspectRatio = payload.image_generation.default_aspect_ratio;
   }
   if (payload.usage) {
     if (els.usageLabel) els.usageLabel.textContent = payload.usage.display || "—";
@@ -322,6 +361,7 @@ function applyState(payload) {
   if (typeof payload.label === "string") {
     state.currentLabel = payload.label;
   }
+  refreshDisplayedModel();
   refreshChatTitle();
   updateRunningUI();
 }
@@ -896,18 +936,19 @@ function buildHistoryMessageNode(message) {
   if (message.role === "assistant") {
     const shell = createMessageShell("assistant", { msgId: `m-${_msgIndex++}` });
     let bodyHTML = "";
+    const hasAttachments = Array.isArray(message.attachments) && message.attachments.length > 0;
     if (message.tools && message.tools.length) {
       bodyHTML += buildToolGroupHTML(message.tools);
     }
     if (message.text && message.text.trim()) {
       bodyHTML += `<div class="stream-part">${renderMarkdown(message.text)}</div>`;
     }
-    if ((message.tools && message.tools.length) && !String(message.text || "").trim()) {
+    if ((message.tools && message.tools.length) && !String(message.text || "").trim() && !hasAttachments) {
       shell.root.classList.add("tools-only");
     }
     shell.body.classList.add("rendered");
-    shell.body.innerHTML = bodyHTML || renderMarkdown("(empty response)");
-    enhanceRenderedContent(shell.body);
+    shell.body.innerHTML = bodyHTML || (hasAttachments ? "" : renderMarkdown("(empty response)"));
+    if (bodyHTML) enhanceRenderedContent(shell.body);
 
     renderMessageAttachments(shell, message.attachments || []);
     setCopyButtonState(shell.copyBtn, buildMessageCopyText(message.text || shell.body.textContent || "", message.attachments || []));
@@ -1767,11 +1808,46 @@ async function injectMessage(sessionId, text) {
   }
 }
 
+async function sendImageGeneration(text) {
+  state.imageGenerating = true;
+  updateRunningUI();
+  agentStatus.set("busy", "开始图片生成", `${state.imageModel} 正在生成图片…`);
+  try {
+    const data = await api("/api/image/generate", {
+      method: "POST",
+      body: {
+        text,
+        session_id: state.sessionId,
+        aspect_ratio: state.imageAspectRatio,
+      },
+    });
+    if (data.reply?.model) state.imageModel = data.reply.model;
+    applyState(data);
+    appendMessage("assistant", data.reply?.text || "", {
+      attachments: data.reply?.attachments || [],
+    });
+    await Promise.all([refreshSessions(), refreshFiles()]);
+    const imageCount = Array.isArray(data.reply?.attachments)
+      ? data.reply.attachments.filter((item) => item?.kind === "image").length
+      : 0;
+    agentStatus.set("idle", "图片已生成", imageCount ? `已返回 ${imageCount} 张图片` : "图片已返回");
+  } finally {
+    state.imageGenerating = false;
+    updateRunningUI();
+  }
+}
+
 async function sendMessage(text) {
+  if (state.imageGenerating) return;
   if (!text.trim() && !state.pendingFiles.length) return;
   const launchedSessionId = state.sessionId;
 
   if (launchedSessionId && state.runningSessions.has(launchedSessionId)) {
+    if (state.imageMode) {
+      appendMessage("system", "图片生成模式下，当前会话正在运行中。请先停止本轮文本会话，再生成图片。");
+      agentStatus.set("error", "无法生成图片", "当前会话仍在运行中，请先点击停止或等待本轮完成。");
+      return;
+    }
     if (!text.trim()) return;
     await injectMessage(launchedSessionId, text);
     clearReplyCtx();
@@ -1785,6 +1861,12 @@ async function sendMessage(text) {
     const snippet = raw.length > 240 ? raw.slice(0, 240) + "…" : raw;
     const escaped = snippet.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     composed = `[引用: "${escaped}"]\n\n${text}`;
+  }
+
+  if (state.imageMode && state.pendingFiles.length) {
+    appendMessage("system", "图片生成模式暂不支持附件。请先移除附件，再输入图片提示词。");
+    agentStatus.set("error", "无法生成图片", "图片生成模式当前只支持文本提示词。");
+    return;
   }
 
   const pendingFiles = [...state.pendingFiles];
@@ -1827,6 +1909,15 @@ async function sendMessage(text) {
   }
 
   appendMessage("user", composed, { attachments });
+  if (state.imageMode) {
+    try {
+      await sendImageGeneration(composed);
+    } catch (err) {
+      appendMessage("system", `图片生成失败: ${err.message}`);
+      agentStatus.set("error", "图片生成失败", err.message || "unknown");
+    }
+    return;
+  }
   setSessionRunning(launchedSessionId, true);
   agentStatus.set("busy", "已提交消息", "正在建立到 Agent 的流式连接…");
   try {
@@ -2132,6 +2223,10 @@ async function addFiles(fileList) {
 }
 
 els.btnAttach?.addEventListener("click", () => els.fileInput.click());
+els.btnImageMode?.addEventListener("click", () => {
+  setImageMode(!state.imageMode);
+  els.input?.focus();
+});
 els.fileInput?.addEventListener("change", () => {
   if (els.fileInput.files.length) {
     addFiles(Array.from(els.fileInput.files));

@@ -34,6 +34,14 @@ class SearchConfig:
 
 
 @dataclass
+class ImageGenerationConfig:
+    api_key: str = ""
+    base_url: str = "https://aihubmix.com/v1"
+    model: str = "gemini-3.1-flash-image-preview-free"
+    default_aspect_ratio: str = "1:1"
+
+
+@dataclass
 class AgentConfig:
     name: str = "pooh-code"
     model: str = "gpt-5.4"
@@ -42,6 +50,7 @@ class AgentConfig:
     feishu: FeishuConfig = field(default_factory=FeishuConfig)
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
+    image: ImageGenerationConfig = field(default_factory=ImageGenerationConfig)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -82,6 +91,8 @@ def _apply_env_from_settings(cfg: AgentConfig) -> None:
         os.environ["TAVILY_API_KEY"] = cfg.search.tavily_api_key
     if cfg.search.brave_api_key:
         os.environ["BRAVE_API_KEY"] = cfg.search.brave_api_key
+    if cfg.image.api_key:
+        os.environ["AIHUBMIX_API_KEY"] = cfg.image.api_key
     if cfg.reasoning.effort:
         os.environ["OPENAI_CODEX_REASONING_EFFORT"] = cfg.reasoning.effort
     if cfg.reasoning.summary:
@@ -102,6 +113,7 @@ def load_settings(path: Path | None = None) -> AgentConfig:
     feishu = raw.get("feishu", {})
     reasoning = raw.get("reasoning", {})
     search = raw.get("search", {})
+    image = raw.get("image", {})
     cfg = AgentConfig(
         name=raw.get("name", "pooh-code"),
         model=raw.get("model", "gpt-5.4"),
@@ -121,6 +133,12 @@ def load_settings(path: Path | None = None) -> AgentConfig:
         search=SearchConfig(
             tavily_api_key=search.get("tavily_api_key", "") or "",
             brave_api_key=search.get("brave_api_key", "") or "",
+        ),
+        image=ImageGenerationConfig(
+            api_key=image.get("api_key", "") or os.environ.get("AIHUBMIX_API_KEY", "") or "",
+            base_url=image.get("base_url", "https://aihubmix.com/v1") or "https://aihubmix.com/v1",
+            model=image.get("model", "gemini-3.1-flash-image-preview-free") or "gemini-3.1-flash-image-preview-free",
+            default_aspect_ratio=image.get("default_aspect_ratio", "1:1") or "1:1",
         ),
     )
     _apply_env_from_settings(cfg)

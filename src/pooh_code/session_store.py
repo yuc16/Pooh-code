@@ -347,7 +347,16 @@ class SessionStore:
             self._save_index()
             return target_session_key, session_id
 
-    def append_message(self, session_key: str, role: str, content: Any, session_id: str | None = None) -> None:
+    def append_message(
+        self,
+        session_key: str,
+        role: str,
+        content: Any,
+        session_id: str | None = None,
+        *,
+        mode: str | None = None,
+        model: str | None = None,
+    ) -> None:
         with self._lock:
             actual_session_id = self.ensure_session(session_key, session_id=session_id)
             record = {
@@ -355,6 +364,10 @@ class SessionStore:
                 "content": content,
                 "ts": shanghai_now_iso(),
             }
+            if mode:
+                record["mode"] = mode
+            if model:
+                record["model"] = model
             with open(self._transcript_path(session_key, actual_session_id), "a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record, ensure_ascii=False) + "\n")
             meta = self._session_meta(session_key, actual_session_id)
@@ -435,6 +448,10 @@ class SessionStore:
                         "content": message.get("content", ""),
                         "ts": shanghai_now_iso(),
                     }
+                    if message.get("mode"):
+                        record["mode"] = message.get("mode")
+                    if message.get("model"):
+                        record["model"] = message.get("model")
                     handle.write(json.dumps(record, ensure_ascii=False) + "\n")
             meta = self._session_meta(session_key, actual_session_id)
             meta["last_active"] = shanghai_now_iso()
@@ -483,7 +500,13 @@ class SessionStore:
             items.sort(key=lambda item: item.get("last_active", ""), reverse=True)
             return items
 
-    def load_messages(self, session_key: str, session_id: str | None = None) -> list[dict[str, Any]]:
+    def load_messages(
+        self,
+        session_key: str,
+        session_id: str | None = None,
+        *,
+        include_meta: bool = False,
+    ) -> list[dict[str, Any]]:
         with self._lock:
             actual_session_id = self.ensure_session(session_key, session_id=session_id)
             path = self._transcript_path(session_key, actual_session_id)
@@ -506,6 +529,8 @@ class SessionStore:
                         "type": role,
                         "content": record.get("content", ""),
                         "ts": record.get("ts") or shanghai_now_iso(),
+                        "mode": record.get("mode") or "",
+                        "model": record.get("model") or "",
                     }
                 )
 
@@ -531,5 +556,12 @@ class SessionStore:
 
             messages: list[dict[str, Any]] = []
             for record in records:
-                messages.append({"role": record["type"], "content": record.get("content", "")})
+                item = {"role": record["type"], "content": record.get("content", "")}
+                if include_meta and record.get("mode"):
+                    item["mode"] = record.get("mode")
+                if include_meta and record.get("model"):
+                    item["model"] = record.get("model")
+                if include_meta and record.get("ts"):
+                    item["ts"] = record.get("ts")
+                messages.append(item)
             return messages

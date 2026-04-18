@@ -268,8 +268,10 @@ Web 端走「邮箱 + 密码」账号体系，每个用户自己的 `session_key
 - 纯工具调用的 assistant 消息会默认收成一条紧凑的“已处理 / N 个工具调用”折叠摘要；连续多条工具消息之间不再留大块空白，且这类纯工具消息不再额外显示 `复制 / 时间戳`
 - 生成的文件**不再在 assistant 气泡里重复展示下载卡片**；前端只保留左侧会话栏下对应 session 的产物归档入口，避免同一文件在聊天区和左栏重复出现
 - 输入以 `/` 开头走 `/api/command` 命令路径，命令回显和输出会作为 system 气泡贴在聊天区里；`/help`、`/tools`、`/skills` 现在会以**可拖拽列宽的命令面板**渲染，左列可左右拖动，便于长 skill 名保持单行显示
+- 聊天框底部在 `/help` 前新增了一个**图片生成**模式按钮；开启后发送入口不再走 `PoohAgent.ask_stream`，而是改调 AIHubMix 的图片模型 `gemini-3.1-flash-image-preview-free`。顶栏模型徽章会立即切到图片模型名，关闭该模式后恢复显示主文本模型 `gpt-5.4`
+- transcript 现在会给每条消息额外落 `mode` 和 `model` 字段：普通文本链路记为 `mode=text`，图片生成链路记为 `mode=image_generation`，方便后续做统计、筛选或回放时明确区分同一 `session_id` 下的不同模型记录
 - 用户消息里的附件不会再退化成原始解析正文：图片会渲染成带缩略图、文件名和体积信息的暖色卡片，PDF/Word/Excel/PPT 等文档在刷新后也会保持为文件卡片而不是把提取出的全文直接铺在用户消息里；图片卡片支持站内大图预览，点击背景或按 `Esc` 可关闭
-- 输入框：Enter 发送，Shift+Enter 换行，⌘↵ 发送；textarea 高度自动增长；附件栏与引用条会自动收起/展开；composer 下方一排 chip 提供 `/help` `/tools` `/skills` `/clear` `/compact` 快捷命令，**点击即直接发送执行**；**agent 运行时输入框保持可用**——用户可随时输入并发送「插话」消息（走 `POST /api/session/inject`），消息会被推入运行中 session 的注入队列，agent 在当前工具执行完、下一轮 LLM 调用前自动读取并追加到 transcript，SSE 流会发一条 `injected` 事件通知前端（在助手气泡中内联显示琥珀色 USER 标签 + 插话内容）；placeholder 会切换为"继续发送消息，Agent 将在下一轮看到"提示；运行时也仍有 `停止` 按钮可用
+- 输入框：Enter 发送，Shift+Enter 换行，⌘↵ 发送；textarea 高度自动增长；附件栏与引用条会自动收起/展开；composer 下方一排 chip 提供 `图片生成` `/help` `/tools` `/skills` `/clear` `/compact` 快捷入口，其中 slash 命令 **点击即直接发送执行**；`图片生成` 是一个可切换模式，启用后 placeholder 会变成“描述你想生成的图片…”，并把同一会话里的生成结果同时写进聊天区和左栏该 session 的产物归档；**agent 运行时输入框保持可用**——用户可随时输入并发送「插话」消息（走 `POST /api/session/inject`），消息会被推入运行中 session 的注入队列，agent 在当前工具执行完、下一轮 LLM 调用前自动读取并追加到 transcript，SSE 流会发一条 `injected` 事件通知前端（在助手气泡中内联显示琥珀色 USER 标签 + 插话内容）；placeholder 会切换为"继续发送消息，Agent 将在下一轮看到"提示；运行时也仍有 `停止` 按钮可用
 - composer 已从聊天滚动容器中拆出，固定挂在中栏底部；同时聊天滚动区底部留白会跟随 composer 实际高度动态同步，避免流式输出（SSE）期间正文被底部输入框压住，看起来像“输入框插进回复中间”
 - 文件上传：输入框左侧的 📎 按钮或拖放文件到输入区域均可添加附件；支持图片（png/jpg/gif/webp）、视频（mp4/mov/avi/webm）、PDF、Office 文档（docx/xlsx/pptx）、CSV、纯文本等；附件会显示为预览条，可单独移除。各类型文件的处理方式：
   - **图片** → base64 编码直接发给多模态 LLM
@@ -316,11 +318,9 @@ SSE 连接使用 `Connection: close` 并在服务端强制 `self.close_connectio
 
 ### 文件下载
 
-当 agent 通过 `write_file` 或 `bash` 在 `workplace/output/<session_id>/` 下生成文件时，前端会自动检测并在助手气泡末尾显示下载按钮（带文件图标和文件名）。点击按钮即可在浏览器中直接下载。
+产物文件统一归档到左栏会话下方的 artifacts 列表，不再在 assistant 气泡里重复插一份下载卡片。
 
-`/api/download?path=<相对路径>` 支持下载 `workplace/output/` 下的任意非隐藏文件，包括 Office 三件套、`.py`、PDF、CSV、图片、文本等。服务端会自动设置合适的 MIME 类型和 `Content-Disposition: attachment` 头。
-
-历史消息中的下载按钮在页面刷新后也会保留（从工具调用记录中重新检测）。
+`/api/download?path=<相对路径>` 支持下载 `workplace/output/` 下的任意非隐藏文件，包括 Office 三件套、`.py`、PDF、CSV、图片、文本等。默认返回 `Content-Disposition: attachment`；当图片附件用于聊天区缩略图和大图预览时，会改用 `/api/download?path=<相对路径>&inline=1` 以内联方式返回。
 
 ### HTTP API
 
@@ -330,10 +330,11 @@ SSE 连接使用 `Connection: close` 并在服务端强制 `self.close_connectio
 | GET  | `/api/messages?session_id=<id>` | 载入指定会话 transcript（已扁平化为纯文本）；`session_id` 可选 |
 | GET  | `/api/sessions` | 列出当前 web channel 下的所有会话 |
 | GET  | `/api/files` | 列出 `workplace/output/` 下的所有文件（跳过 `.git` 等隐藏目录），并按 `session_id` 分组返回 |
-| GET  | `/api/download?path=<rel>` | 下载 `workplace/output/` 中的任意非隐藏文件，自动设置 MIME 类型和 `Content-Disposition: attachment` |
+| GET  | `/api/download?path=<rel>[&inline=1]` | 下载或内联预览 `workplace/output/` 中的任意非隐藏文件；图片缩略图和 lightbox 走 `inline=1` |
 | POST | `/api/upload` | multipart/form-data 文件上传，保存到 `workplace/uploads/`，返回服务端路径列表；单次上传限 100MB |
 | POST | `/api/chat` | 同步调用 `agent.ask_for_session(session_key, text, session_id=...)`；同一 `session_id` 不允许重复并发 |
 | POST | `/api/chat/stream` | **SSE 流式**接口；请求体里显式带 `session_id` 和可选 `files`（上传后的服务端路径数组），不同会话可并行跑，同一会话只允许一个运行中的任务 |
+| POST | `/api/image/generate` | 图片生成接口；请求体里显式带 `session_id` 和 `text`，服务端调用 AIHubMix 的 `gemini-3.1-flash-image-preview-free`，把生成图片落到 `workplace/output/<session_id>/` 并同步回聊天区 |
 | POST | `/api/command` | 走 `CommandProcessor`，支持 `/help` `/ctx` `/skills` `/compact` 等；请求体里可带 `session_id` |
 | POST | `/api/session/new` | 新建一个 `session_id` |
 | POST | `/api/session/switch` | 按 `session_id` 前缀切换（只在当前 web channel 的 slot 内匹配） |

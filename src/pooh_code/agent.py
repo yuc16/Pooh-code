@@ -351,7 +351,14 @@ class PoohAgent:
                         content_blocks.append({"type": "text", "text": f"[文件处理失败: {Path(fpath).name} - {exc}]"})
                 user_content = content_blocks if content_blocks else user_text
 
-            self.sessions.append_message(session_key, "user", user_content, session_id=actual_session_id)
+            self.sessions.append_message(
+                session_key,
+                "user",
+                user_content,
+                session_id=actual_session_id,
+                mode="text",
+                model=self.config.model,
+            )
 
             compacted = self.compact_session(
                 session_key,
@@ -455,6 +462,8 @@ class PoohAgent:
                         "assistant",
                         assistant_blocks,
                         session_id=actual_session_id,
+                        mode="text",
+                        model=self.config.model,
                     )
 
                 if response.stop_reason != "tool_use":
@@ -466,6 +475,8 @@ class PoohAgent:
                         "user",
                         tool_result_blocks,
                         session_id=actual_session_id,
+                        mode="text",
+                        model=self.config.model,
                     )
 
                 # ── 检查用户插话 ──
@@ -478,6 +489,8 @@ class PoohAgent:
                             "user",
                             inj_text,
                             session_id=actual_session_id,
+                            mode="text",
+                            model=self.config.model,
                         )
             else:
                 # for 循环正常跑完意味着跑满 max_turns 还在 tool_use,被强制截断
@@ -537,7 +550,14 @@ class PoohAgent:
             self.context.context_window = self.config.context_window
             messages = self.sessions.load_messages(session_key, session_id=session_id)
             ensure_session_output_dir(session_id)
-            self.sessions.append_message(session_key, "user", user_text, session_id=session_id)
+            self.sessions.append_message(
+                session_key,
+                "user",
+                user_text,
+                session_id=session_id,
+                mode="text",
+                model=self.config.model,
+            )
             messages.append({"role": "user", "content": user_text})
 
             compacted = self.compact_session(
@@ -609,6 +629,8 @@ class PoohAgent:
                         "assistant",
                         assistant_blocks,
                         session_id=session_id,
+                        mode="text",
+                        model=self.config.model,
                     )
                     messages.append({"role": "assistant", "content": assistant_blocks})
 
@@ -621,6 +643,8 @@ class PoohAgent:
                         "user",
                         tool_result_blocks,
                         session_id=session_id,
+                        mode="text",
+                        model=self.config.model,
                     )
                     messages.append({"role": "user", "content": tool_result_blocks})
             else:

@@ -36,6 +36,7 @@ from pooh_code.agent import PoohAgent  # noqa: E402
 from pooh_code.auth_db import AuthError, User, get_store  # noqa: E402
 from pooh_code.commands import COMMAND_CATALOG, TOOL_DESCRIPTION_MAP, CommandProcessor  # noqa: E402
 from pooh_code.config import load_settings  # noqa: E402
+from pooh_code.image_generation import generate_images  # noqa: E402
 from pooh_code.output_files import (  # noqa: E402
     delete_session_output_dir,
     OUTPUT_DIR,
@@ -97,6 +98,22 @@ def _content_disposition_attachment(filename: str) -> str:
     escaped_ascii_name = ascii_name.replace("\\", "\\\\").replace('"', '\\"')
     encoded_name = quote(filename, safe="")
     return f"attachment; filename=\"{escaped_ascii_name}\"; filename*=UTF-8''{encoded_name}"
+
+
+def _content_disposition_inline(filename: str) -> str:
+    try:
+        ascii_name = filename.encode("ascii").decode("ascii")
+    except UnicodeEncodeError:
+        suffix = Path(filename).suffix
+        ascii_name = f"preview{suffix}" if suffix else "preview"
+    escaped_ascii_name = ascii_name.replace("\\", "\\\\").replace('"', '\\"')
+    encoded_name = quote(filename, safe="")
+    return f"inline; filename=\"{escaped_ascii_name}\"; filename*=UTF-8''{encoded_name}"
+
+
+def _output_url(rel_path: str, *, inline: bool = False) -> str:
+    encoded = quote(rel_path, safe="")
+    return f"/api/download?path={encoded}{'&inline=1' if inline else ''}"
 
 
 def _parse_multipart(content_type: str, body: bytes) -> list[dict[str, Any]]:
@@ -214,14 +231,27 @@ def _extract_attachments(content: Any) -> list[dict[str, Any]]:
                 if attachment:
                     items.append(attachment)
             continue
+        media_type = str(block.get("media_type", "")).strip() or "image/png"
+        name = str(block.get("filename", "")).strip() or "已上传图片"
+        if str(block.get("path", "")).strip():
+            rel_path = str(block.get("path", "")).strip()
+            items.append(
+                {
+                    "kind": "image",
+                    "name": name,
+                    "media_type": media_type,
+                    "size": int(block.get("size") or 0),
+                    "url": _output_url(rel_path, inline=True),
+                }
+            )
+            continue
         data = str(block.get("data", "")).strip()
         if not data:
             continue
-        media_type = str(block.get("media_type", "")).strip() or "image/png"
         items.append(
             {
                 "kind": "image",
-                "name": str(block.get("filename", "")).strip() or "已上传图片",
+                "name": name,
                 "media_type": media_type,
                 "url": f"data:{media_type};base64,{data}",
             }
@@ -279,6 +309,12 @@ def _serialize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if not text.strip() and tool_blocks:
                 continue
             entry: dict[str, Any] = {"role": role, "text": text}
+            if msg.get("mode"):
+                entry["mode"] = msg.get("mode")
+            if msg.get("model"):
+                entry["model"] = msg.get("model")
+            if msg.get("ts"):
+                entry["ts"] = msg.get("ts")
             attachments = _extract_attachments(content)
             if attachments:
                 entry["attachments"] = attachments
@@ -288,6 +324,7 @@ def _serialize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if role == "assistant":
             text = _extract_text_only(content)
             tools = _extract_tool_blocks(content)
+            attachments = _extract_attachments(content)
             # Pair each tool_use with its result.
             paired: list[dict[str, Any]] = []
             for t in tools:
@@ -300,12 +337,27 @@ def _serialize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         "is_error": result.get("is_error", False) if result else False,
                     })
             entry: dict[str, Any] = {"role": role, "text": text}
+            if msg.get("mode"):
+                entry["mode"] = msg.get("mode")
+            if msg.get("model"):
+                entry["model"] = msg.get("model")
+            if msg.get("ts"):
+                entry["ts"] = msg.get("ts")
             if paired:
                 entry["tools"] = paired
+            if attachments:
+                entry["attachments"] = attachments
             out.append(entry)
             continue
 
-        out.append({"role": role, "text": _extract_text_only(content)})
+        entry = {"role": role, "text": _extract_text_only(content)}
+        if msg.get("mode"):
+            entry["mode"] = msg.get("mode")
+        if msg.get("model"):
+            entry["model"] = msg.get("model")
+        if msg.get("ts"):
+            entry["ts"] = msg.get("ts")
+        out.append(entry)
     return out
 
 
@@ -460,6 +512,8 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 return self._handle_chat()
             if path == "/api/chat/stream":
                 return self._handle_chat_stream()
+            if path == "/api/image/generate":
+                return self._handle_image_generate()
             if path == "/api/command":
                 return self._handle_command()
             if path == "/api/session/new":
@@ -517,6 +571,11 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
             "session_key": session_key,
             "session_id": actual_session_id,
             "model": agent.config.model,
+            "image_generation": {
+                "model": agent.config.image.model,
+                "default_aspect_ratio": agent.config.image.default_aspect_ratio,
+                "enabled": bool(agent.config.image.api_key),
+            },
             "context_window": agent.config.context_window,
             "running": self.server.runs.is_running(actual_session_id),
             "usage": {
@@ -616,7 +675,7 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         agent = self.server.agent
         session_key = self._session_key()
         session_id = self._session_id_from_query(parsed) or agent.sessions.get_session_id(session_key)
-        messages = agent.sessions.load_messages(session_key, session_id=session_id)
+        messages = agent.sessions.load_messages(session_key, session_id=session_id, include_meta=True)
         self._send_json(
             {
                 "ok": True,
@@ -798,6 +857,69 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
             }
         )
 
+    def _handle_image_generate(self) -> None:
+        body = self._read_json_body()
+        text = str(body.get("text", "")).strip()
+        if not text:
+            raise ValueError("text is required")
+        agent = self.server.agent
+        session_key = self._session_key()
+        session_id = self._session_id_from_body(body, session_key)
+        if self.server.runs.is_running(session_id):
+            raise ValueError("session is running; cancel it before generating an image")
+
+        agent.sessions.append_message(
+            session_key,
+            "user",
+            text,
+            session_id=session_id,
+            mode="image_generation",
+            model=agent.config.image.model,
+        )
+        result = generate_images(
+            agent.config.image,
+            prompt=text,
+            session_id=session_id,
+            aspect_ratio=str(body.get("aspect_ratio", "")).strip() or None,
+        )
+
+        assistant_content: list[dict[str, Any]] = []
+        if result.text.strip():
+            assistant_content.append({"type": "text", "text": result.text.strip()})
+        for image in result.images:
+            assistant_content.append(
+                {
+                    "type": "image",
+                    "filename": image.name,
+                    "media_type": image.media_type,
+                    "path": image.relative_path,
+                    "size": image.size,
+                }
+            )
+        if not assistant_content:
+            assistant_content = [{"type": "text", "text": "已生成图片。"}]
+        agent.sessions.append_message(
+            session_key,
+            "assistant",
+            assistant_content,
+            session_id=session_id,
+            mode="image_generation",
+            model=result.model,
+        )
+
+        self._send_json(
+            {
+                "ok": True,
+                "reply": {
+                    "text": result.text,
+                    "attachments": _extract_attachments(assistant_content),
+                    "model": result.model,
+                    "session_id": session_id,
+                },
+                **self._state_payload(session_id),
+            }
+        )
+
     def _handle_new_session(self) -> None:
         agent = self.server.agent
         session_key = self._session_key()
@@ -906,6 +1028,7 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         """下载 workplace/output/ 中的文件；要求文件位于当前用户拥有的 session 目录下。"""
         qs = parse_qs(parsed.query)
         rel_path = (qs.get("path") or [""])[0].strip()
+        inline = (qs.get("inline") or [""])[0].strip() in {"1", "true", "yes"}
         if not rel_path:
             self._send_error_json(400, "path parameter is required")
             return
@@ -939,7 +1062,7 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header(
             "Content-Disposition",
-            _content_disposition_attachment(target.name),
+            _content_disposition_inline(target.name) if inline else _content_disposition_attachment(target.name),
         )
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
