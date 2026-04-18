@@ -154,6 +154,8 @@ def _extract_text_only(content: Any) -> str:
                 block_type = block.get("type")
                 if block_type == "text":
                     text = str(block.get("text", ""))
+                    if _detect_attachment_from_text(text):
+                        continue
                     if has_image_block and re.match(r"^\s*🖼️\s*图片文件:", text):
                         continue
                     if text:
@@ -170,6 +172,35 @@ def _extract_text_only(content: Any) -> str:
     return json.dumps(content, ensure_ascii=False, default=str)
 
 
+def _detect_attachment_from_text(text: str) -> dict[str, Any] | None:
+    value = str(text or "").strip()
+    if not value:
+        return None
+
+    patterns: list[tuple[re.Pattern[str], str]] = [
+        (re.compile(r"^\s*📄\s*PDF 文件:\s*(.+?)(?:\n|$)"), "pdf"),
+        (re.compile(r"^\s*📄\s*Word 文档:\s*(.+?)(?:\n|$)"), "word"),
+        (re.compile(r"^\s*📊\s*Excel 文件:\s*(.+?)(?:\n|$)"), "excel"),
+        (re.compile(r"^\s*📊\s*(.+?\.(?:csv|tsv))(?:\n|$)", re.IGNORECASE), "table"),
+        (re.compile(r"^\s*📑\s*PPT 文件:\s*(.+?)(?:\n|$)"), "ppt"),
+        (re.compile(r"^\s*📝\s*(.+?\.(?:txt|md|json|py|js|ts|html|css|xml|yaml|yml|toml|sh|sql|log))(?:\n|$)", re.IGNORECASE), "text"),
+        (re.compile(r"^\s*\[已上传文件:\s*(.+?)（"), "file"),
+    ]
+    for pattern, subtype in patterns:
+        match = pattern.match(value)
+        if not match:
+            continue
+        name = Path(match.group(1).strip()).name
+        if not name:
+            continue
+        return {
+            "kind": "file",
+            "subtype": subtype,
+            "name": name,
+        }
+    return None
+
+
 def _extract_attachments(content: Any) -> list[dict[str, Any]]:
     if not isinstance(content, list):
         return []
@@ -178,6 +209,10 @@ def _extract_attachments(content: Any) -> list[dict[str, Any]]:
         if not isinstance(block, dict):
             continue
         if block.get("type") != "image":
+            if block.get("type") == "text":
+                attachment = _detect_attachment_from_text(str(block.get("text", "")))
+                if attachment:
+                    items.append(attachment)
             continue
         data = str(block.get("data", "")).strip()
         if not data:

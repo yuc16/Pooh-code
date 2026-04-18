@@ -246,7 +246,7 @@ Web 端走「邮箱 + 密码」账号体系，每个用户自己的 `session_key
 - **暖调米白书卷气主题**（Newsreader 衬线 + Geist 无衬线 + JetBrains Mono 等宽 + 琥珀 accent），基于 oklch 色彩空间的低饱和度米白纸张配色，不再提供深色主题切换
 - **三栏布局**：左侧会话栏（2fr）/ 中间聊天区（7fr）/ 右侧 Minimap（1fr）；两条 `col-divider` 分隔条可鼠标拖拽调整三栏比例，结果持久化到 `localStorage.pooh.cols.v1`
 - 左侧栏：顶部是品牌 logo + 刷新按钮 + 搜索框（⌘K 聚焦）+ "新建会话"按钮（⌘N 新建）、会话列表（`.convo` 行）、底部用户卡片（头像 + 邮箱 + 退出按钮）
-- 左上角品牌区与浏览器页签统一使用仓库内图片 [src/frontend/static/logo.jpg](/Users/wangyc/Desktop/projects/Pooh-code/src/frontend/static/logo.jpg) 作为 logo；页签 favicon 引用带版本参数以避免浏览器长期缓存旧图，旁边显示小写字样 `pooh code`
+- 首页左上角、登录页品牌区、浏览器页签 favicon 与 touch icon 现在统一使用 [src/frontend/static/logo.jpg](/Users/wangyc/Desktop/projects/Pooh-code/src/frontend/static/logo.jpg)；首页和登录页左上角 logo 不再带边框、底色或阴影方框，直接贴合页面背景显示，并带版本参数以避免浏览器长期缓存旧图
 - 每个会话条目 `.convo`：**紧凑单行**布局——标题 + 时间（右对齐贴到 token 进度条右缘）同一行，下方一条 token 进度条（来自 `list_sessions` 返回的 `usage` 字段，≥75% 转为红色警示），**不再显示"N 产物"徽标**以减少视觉噪音；**点击标题可展开内嵌的产物列表**（来自 `/api/files` 对应 `session_id` 分组，每条可直接点击下载），再次点击切换收起
 - 会话列表按日期分组（今天 / 昨天 / N 天前 / 年月），只显示 web channel 下的会话（不混入 cli / feishu）；搜索框可按标题或 `session_id` 实时过滤
 - **双击标题**可直接重命名（Enter 确认，Escape 取消），修改后写入 `sessions.json`
@@ -264,10 +264,11 @@ Web 端走「邮箱 + 密码」账号体系，每个用户自己的 `session_key
   - **user 气泡**：保留头像 + 衬线体"你"角色名，正文放在柔和的米白 → 淡琥珀渐变 bubble 内（无硬边框，只有极淡的内阴影和 1px 微光边），不再是旧版那种突兀的"琥珀色方块"
   - **assistant / system 气泡**：**不再显示头像与"Pooh Code / 系统"角色名**，回答内容直接贴左呈现——减少视觉干扰，让阅读焦点始终在正文上
   - 在聊天区内**选中任意一段消息文本并完成选区**后，会在选区附近浮出一个“引用到输入框”按钮；点击后把该段文字以 `[引用: "..."]\n\n` 的**纯文本前缀**注入输入框（保留原样，不再强行 Markdown 化成 `> blockquote`），发送后在对方气泡里会以**独立 DOM 节点 `.quote`**（左侧淡琥珀竖线 + 灰色正文，**不显示"你"角色名**）渲染，避免引用块被 Markdown 解析器误判为代码块
-  - hover 消息时气泡下方保留 `复制 / 时间戳` 操作；新消息显示 `HH:MM`（跨日则显示 `MM-DD HH:MM`）；历史消息因 transcript 暂未透传 `ts` 给前端，默认留空
-  - **生成的文件下载按钮**现在统一落在 assistant 气泡正文的**最末端**（独立的 `.msg-downloads` 容器，不再内嵌在"已思考"折叠块下方），让用户点完思考区、再看到下载入口更符合阅读顺序
+- hover 消息时气泡下方保留 `复制 / 时间戳` 操作；新消息显示 `HH:MM`（跨日则显示 `MM-DD HH:MM`）；历史消息因 transcript 暂未透传 `ts` 给前端，默认留空
+- 纯工具调用的 assistant 消息会默认收成一条紧凑的“已处理 / N 个工具调用”折叠摘要；连续多条工具消息之间不再留大块空白，且这类纯工具消息不再额外显示 `复制 / 时间戳`
+- 生成的文件**不再在 assistant 气泡里重复展示下载卡片**；前端只保留左侧会话栏下对应 session 的产物归档入口，避免同一文件在聊天区和左栏重复出现
 - 输入以 `/` 开头走 `/api/command` 命令路径，命令回显和输出会作为 system 气泡贴在聊天区里；`/help`、`/tools`、`/skills` 现在会以**可拖拽列宽的命令面板**渲染，左列可左右拖动，便于长 skill 名保持单行显示
-- 用户消息里的图片附件不再退化成 `[🖼 文件名]` 纯文本，而是渲染成带缩略图、文件名和体积信息的暖色卡片；历史消息同样会从 transcript 中恢复为图片卡片样式；点击图片卡片会在站内打开大图预览，支持背景点击和 `Esc` 关闭
+- 用户消息里的附件不会再退化成原始解析正文：图片会渲染成带缩略图、文件名和体积信息的暖色卡片，PDF/Word/Excel/PPT 等文档在刷新后也会保持为文件卡片而不是把提取出的全文直接铺在用户消息里；图片卡片支持站内大图预览，点击背景或按 `Esc` 可关闭
 - 输入框：Enter 发送，Shift+Enter 换行，⌘↵ 发送；textarea 高度自动增长；附件栏与引用条会自动收起/展开；composer 下方一排 chip 提供 `/help` `/tools` `/skills` `/clear` `/compact` 快捷命令，**点击即直接发送执行**；**agent 运行时输入框保持可用**——用户可随时输入并发送「插话」消息（走 `POST /api/session/inject`），消息会被推入运行中 session 的注入队列，agent 在当前工具执行完、下一轮 LLM 调用前自动读取并追加到 transcript，SSE 流会发一条 `injected` 事件通知前端（在助手气泡中内联显示琥珀色 USER 标签 + 插话内容）；placeholder 会切换为"继续发送消息，Agent 将在下一轮看到"提示；运行时也仍有 `停止` 按钮可用
 - composer 已从聊天滚动容器中拆出，固定挂在中栏底部；同时聊天滚动区底部留白会跟随 composer 实际高度动态同步，避免流式输出（SSE）期间正文被底部输入框压住，看起来像“输入框插进回复中间”
 - 文件上传：输入框左侧的 📎 按钮或拖放文件到输入区域均可添加附件；支持图片（png/jpg/gif/webp）、视频（mp4/mov/avi/webm）、PDF、Office 文档（docx/xlsx/pptx）、CSV、纯文本等；附件会显示为预览条，可单独移除。各类型文件的处理方式：

@@ -727,7 +727,6 @@ function createMessageShell(role, { msgId = null, who = null, time = null } = {}
       </div>` : ""}
       <div class="body"></div>
       <div class="msg-attachments"></div>
-      <div class="msg-downloads"></div>
       ${canAct ? `
       <div class="msg-tools">
         <button class="msg-copy" type="button" title="复制消息">复制</button>
@@ -738,12 +737,11 @@ function createMessageShell(role, { msgId = null, who = null, time = null } = {}
   const body = root.querySelector(".body");
   const attachments = root.querySelector(".msg-attachments");
   const copyBtn = root.querySelector(".msg-copy");
-  const downloads = root.querySelector(".msg-downloads");
   if (copyBtn) {
     setCopyButtonState(copyBtn, "");
     attachCopyHandler(copyBtn);
   }
-  return { root, body, attachments, copyBtn, downloads };
+  return { root, body, attachments, copyBtn };
 }
 
 function _renderUserBodyWithQuote(shell, text) {
@@ -904,17 +902,12 @@ function buildHistoryMessageNode(message) {
     if (message.text && message.text.trim()) {
       bodyHTML += `<div class="stream-part">${renderMarkdown(message.text)}</div>`;
     }
+    if ((message.tools && message.tools.length) && !String(message.text || "").trim()) {
+      shell.root.classList.add("tools-only");
+    }
     shell.body.classList.add("rendered");
     shell.body.innerHTML = bodyHTML || renderMarkdown("(empty response)");
     enhanceRenderedContent(shell.body);
-
-    // Move download buttons from inside body to msg-downloads at the end
-    const bodyDownloads = shell.body.querySelectorAll(".file-download");
-    bodyDownloads.forEach((a) => shell.downloads.appendChild(a));
-    // Remove the now-empty inline download container (stream-part wrapping the anchors)
-    shell.body.querySelectorAll(".stream-part").forEach((sp) => {
-      if (!sp.children.length && !sp.textContent.trim()) sp.remove();
-    });
 
     renderMessageAttachments(shell, message.attachments || []);
     setCopyButtonState(shell.copyBtn, buildMessageCopyText(message.text || shell.body.textContent || "", message.attachments || []));
@@ -976,18 +969,12 @@ async function logout() {
 
 function buildToolGroupHTML(tools) {
   if (!tools || !tools.length) return "";
-  const downloadPaths = [];
   const items = tools.map((t) => {
     const inputJson = escapeHtml(JSON.stringify(t.input || {}, null, 2));
     const resultText = escapeHtml(t.result || "");
     const errClass = t.is_error ? " error" : "";
     const statusLabel = t.is_error ? "失败" : "完成";
     const resultLabel = t.is_error ? "ERROR" : "OUTPUT";
-    if (!t.is_error && t.result) {
-      for (const outputPath of _extractOutputPaths(t.name, t.result)) {
-        downloadPaths.push(outputPath);
-      }
-    }
     return `<div class="tool-block${errClass}">
       <div class="tool-head">
         <span class="badge">TOOL</span>
@@ -1001,27 +988,15 @@ function buildToolGroupHTML(tools) {
       </div>
     </div>`;
   }).join("");
-  let downloadHTML = "";
-  if (downloadPaths.length) {
-    const btns = downloadPaths.map((p) => {
-      const name = p.split("/").pop();
-      const icon = _fileIcon(name);
-      return `<a class="file-download" href="/api/download?path=${encodeURIComponent(p)}" target="_blank">` +
-        `<span class="file-icon">${icon}</span>` +
-        `<span class="file-info"><span class="file-name">${escapeHtml(name)}</span>` +
-        `<span class="file-meta">点击下载</span></span></a>`;
-    }).join("");
-    downloadHTML = `<div class="stream-part" style="display:flex;flex-wrap:wrap;gap:8px">${btns}</div>`;
-  }
   return `<div class="thinking-group stream-part collapsed">
     <div class="thinking-head" onclick="this.parentElement.classList.toggle('collapsed')">
       <span class="thinking-icon">⊙</span>
-      <span class="thinking-label">已思考</span>
-      <span class="thinking-count"> · ${tools.length} 个工具调用</span>
+      <span class="thinking-label">已处理</span>
+      <span class="thinking-count">${tools.length} 个工具调用</span>
       <span class="caret">▾</span>
     </div>
     <div class="thinking-body">${items}</div>
-  </div>${downloadHTML}`;
+  </div>`;
 }
 
 async function refreshMessages() {
@@ -1373,11 +1348,11 @@ async function deleteSession(sessionId) {
 // ─── Streaming bubble ───
 function createAssistantBubble() {
   const shell = createMessageShell("assistant", { msgId: `m-${_msgIndex++}`, time: new Date() });
+  shell.root.classList.add("tools-only");
   return {
     root: shell.root,
     body: shell.body,
     copyBtn: shell.copyBtn,
-    downloads: shell.downloads,
     currentText: null,
     textParts: [],
     toolBlocks: {},
@@ -1406,9 +1381,9 @@ function finalizeToolGroup(bubble) {
     group._finalized = true;
     const n = group._toolCount || 0;
     group.querySelector(".thinking-icon").textContent = "⊙";
-    group.querySelector(".thinking-label").textContent = `工具调用完毕`;
+    group.querySelector(".thinking-label").textContent = "已处理";
     group.querySelector(".thinking-count").textContent =
-      n > 1 ? ` · ${n} 个工具调用` : n === 1 ? ` · 1 个工具调用` : "";
+      n > 1 ? `${n} 个工具调用` : n === 1 ? "1 个工具调用" : "";
   }
 }
 
@@ -1421,6 +1396,7 @@ function _endOtherBlocks(bubble, keep) {
 function appendTextDelta(bubble, delta) {
   removeCursor(bubble);
   _endOtherBlocks(bubble, "text");
+  bubble.root.classList.remove("tools-only");
   bubble.body.classList.add("rendered");
   if (!bubble.currentText) {
     const span = document.createElement("div");
@@ -1469,8 +1445,8 @@ function addToolBlock(bubble, { call_id, name }) {
     group.innerHTML = `
       <div class="thinking-head">
         <span class="thinking-icon">⊘</span>
-        <span class="thinking-label">调用工具中</span>
-        <span class="thinking-count"></span>
+        <span class="thinking-label">处理中</span>
+        <span class="thinking-count">0 个工具调用</span>
         <span class="caret">▾</span>
       </div>
       <div class="thinking-body"></div>
@@ -1486,7 +1462,7 @@ function addToolBlock(bubble, { call_id, name }) {
 
   group._toolCount++;
   group.querySelector(".thinking-count").textContent =
-    group._toolCount > 1 ? ` (${group._toolCount} 个工具调用)` : "";
+    group._toolCount > 1 ? `${group._toolCount} 个工具调用` : "1 个工具调用";
 
   const wrap = document.createElement("div");
   wrap.className = "tool-block";
@@ -1538,13 +1514,6 @@ function attachToolResult(bubble, { tool_use_id, name, content, is_error }) {
   body.appendChild(label);
   body.appendChild(pre);
 
-  if (!is_error && content) {
-    for (const outputPath of _extractOutputPaths(name, content)) {
-      const dlBtn = createDownloadButton(outputPath);
-      if (!bubble._pendingDownloads) bubble._pendingDownloads = [];
-      bubble._pendingDownloads.push(dlBtn);
-    }
-  }
   autoScrollIfNear();
 }
 
@@ -1574,31 +1543,6 @@ function _humanSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function _extractOutputPaths(toolName, resultText) {
-  if (toolName !== "write_file" && toolName !== "bash") return [];
-  const matches = resultText.match(/workplace\/output\/([^\s"'`)\]}]+)/gi) || [];
-  const outputPaths = [];
-  for (const match of matches) {
-    const relPath = match.replace(/^.*?workplace\/output\//i, "").replace(/[),;:\]}]+$/, "");
-    if (!outputPaths.includes(relPath)) outputPaths.push(relPath);
-  }
-  return outputPaths;
-}
-
-function createDownloadButton(relPath) {
-  const name = relPath.split("/").pop();
-  const a = document.createElement("a");
-  a.className = "file-download";
-  a.href = `/api/download?path=${encodeURIComponent(relPath)}`;
-  a.target = "_blank";
-  a.innerHTML = `<span class="file-icon">${_fileIcon(name)}</span>` +
-    `<span class="file-info">` +
-    `<span class="file-name">${escapeHtml(name)}</span>` +
-    `<span class="file-meta">点击下载</span>` +
-    `</span>`;
-  return a;
 }
 
 // ─── SSE Chat Stream ───
@@ -1728,12 +1672,6 @@ async function streamChat(text, files = []) {
             bubble.copyBtn,
             bubble.textParts.map((p) => p.raw).join("\n\n") || evt.text || "",
           );
-          if (bubble._pendingDownloads && bubble._pendingDownloads.length) {
-            const dlContainer = bubble.root.querySelector(".msg-downloads");
-            for (const btn of bubble._pendingDownloads) {
-              dlContainer.appendChild(btn);
-            }
-          }
           scheduleMinimapRebuild();
         }
         if (evt.session_id && state.sessionId === launchedSessionId) {
