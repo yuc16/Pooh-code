@@ -228,21 +228,23 @@ Web 端走「邮箱 + 密码」账号体系，每个用户自己的 `session_key
 
 ### 界面功能
 
-- 浅色风格，左侧 sidebar + 右侧主聊天区的经典两栏布局
-- 左侧 sidebar 支持拖拽调整宽度
-- 左侧：新建会话、刷新、快捷命令（`/help` `/ctx` `/sessions` `/skills` `/compact` `/clear`）、会话列表、按 `session_id` 分组的产物归档面板
-- 会话列表只显示 web channel 下的会话（不混入 cli / feishu），点击任一条即可**切换并保留历史记录**
-- 每个会话条目显示中文标题，标题下方附带小字 `session_id`；**双击标题**可直接重命名（Enter 确认，Escape 取消），修改后写入 `sessions.json` 并同步刷新产物归档面板
-- 每个会话条目 hover 时右侧出现 `✕` 删除按钮，点击会弹 confirm 二次确认，确认后同步删除 [workplace/runtime/sessions/main/web/&lt;session_id&gt;/transcript.jsonl](/Users/wangyc/Desktop/projects/Pooh-code/workplace/runtime/sessions/main/web) 、索引记录，以及 [workplace/output/&lt;session_id&gt;](/Users/wangyc/Desktop/projects/Pooh-code/workplace/output) 下对应的产物目录；如果删的是最后一条会自动新建一条空白会话
-- 顶栏：状态灯（就绪 / 思考中 / 错误）、实时 context usage（如 `1019/400k`）、当前 model 徽章
+- **暖调米白书卷气主题**（Newsreader 衬线 + Geist 无衬线 + JetBrains Mono 等宽 + 琥珀 accent），基于 oklch 色彩空间的低饱和度米白纸张配色，不再提供深色主题切换
+- **三栏布局**：左侧会话栏（2fr）/ 中间聊天区（7fr）/ 右侧 Minimap（1fr）；两条 `col-divider` 分隔条可鼠标拖拽调整三栏比例，结果持久化到 `localStorage.pooh.cols.v1`
+- 左侧栏：顶部是品牌 logo + 刷新按钮 + 搜索框（⌘K 聚焦）+ "新建会话"按钮（⌘N 新建）、会话列表（`.convo` 行）、底部用户卡片（头像 + 邮箱 + 退出按钮）
+- 每个会话条目 `.convo`：中文标题 + 相对时间 + 产物数 + **每会话 token 进度条**（从后端 `list_sessions` 返回的 `usage` 字段渲染，≥75% 转为红色警示），**点击标题可展开内嵌的产物列表**（来自 `/api/files` 对应 `session_id` 分组，每条可直接点击下载），再次点击切换收起
+- 会话列表按日期分组（今天 / 昨天 / N 天前 / 年月），只显示 web channel 下的会话（不混入 cli / feishu）；搜索框可按标题或 `session_id` 实时过滤
+- **双击标题**可直接重命名（Enter 确认，Escape 取消），修改后写入 `sessions.json`
+- hover 会话时右侧出现 `✕` 删除按钮，确认后同步删除 [workplace/runtime/sessions/main/web/&lt;session_id&gt;/transcript.jsonl](/Users/wangyc/Desktop/projects/Pooh-code/workplace/runtime/sessions/main/web) 、索引记录，以及 [workplace/output/&lt;session_id&gt;](/Users/wangyc/Desktop/projects/Pooh-code/workplace/output) 下对应的产物目录；如果删的是最后一条会自动新建一条空白会话
+- 中间栏顶栏：当前会话标题、model 徽章（带呼吸灯 pulse，`busy` 态橙色脉动、`err` 态红色）、"压缩上下文"按钮（等价于 `/compact`）、"停止"按钮
+- 右侧 Minimap：把聊天区域按 `scale` 缩放后绘制成 mini 预览，支持点击跳转、拖拽 viewport 滚动，顶部按钮可一键回到底部
 - **主页面 Agent 状态面板**：顶栏下方常驻一条高可见度状态条，把 Agent 当前在做什么实时外显：
   - 状态等级按颜色区分——`idle`（灰）/ `busy`（蓝）/ `thinking` 推理中（紫）/ `tool` 工具调用（橙）/ `error`（红），每个级别配独立的标题、详情文本和秒级计时器
   - 事件粒度映射到 SSE 流：`turn_start` → "第 N 轮"、`reasoning_delta` → "思考中 · 模型正在进行推理"、`tool_use_started`/`tool_use_done` → "调用/执行工具: &lt;name&gt;"、`tool_result` → "工具已返回"、`text_delta` → "生成回复中"、`done` → "完成"、`cancelled` → "已取消"、`truncated` → "已截断"、`compacted` → "上下文已压缩"
   - 运行 slash 命令（例如 `/compact`）时也有独立反馈：成功显示「命令完成」，失败则明确提示「当前会话仍在运行中，请先点击停止或等待本轮完成」——解决之前用户不知道为何命令没反应的问题
   - 兜底机制：即便 SSE 流提前关闭未收到 `done` 事件，前端也会在 `finally` 里强制把「思考中」落定为「已思考」并用已接收到的文本渲染 Markdown，避免"agent 已回答完但前端卡在思考中需要手动刷新"的旧 bug
   - 8 秒无事件会追加"响应延迟较高，已等候 Xs"提示，让用户知道不是前端卡了
-- 主聊天区：user / assistant / system 三种气泡，支持正常上下滚动（老版本的 flex `min-height` bug 已修）
-- 输入框：Enter 发送，Shift+Enter 换行，textarea 高度自动增长；**agent 运行时输入框保持可用**——用户可随时输入并发送「插话」消息（走 `POST /api/session/inject`），消息会被推入运行中 session 的注入队列，agent 在当前工具执行完、下一轮 LLM 调用前自动读取并追加到 transcript，SSE 流会发一条 `injected` 事件通知前端（在助手气泡中内联显示蓝色 USER 标签 + 插话内容）；placeholder 会切换为"发送插话，Agent 将在下一轮看到"提示；运行时也仍有 `停止` 按钮可用
+- 主聊天区：user / assistant / system 三种气泡（`.msg.u` / `.msg.a` / `.msg.s`），头像 + 衬线体角色名 + 正文；user 气泡使用琥珀色（`accent-weak`）背景方形 bubble，assistant/system 使用米白底；hover 消息时气泡下方出现 `引用 / 复制` 两个操作按钮——点击「引用」会把原文作为 `> quote` 填到输入框上方的引用条
+- 输入框：Enter 发送，Shift+Enter 换行，⌘↵ 发送；textarea 高度自动增长；附件栏与引用条会自动收起/展开；composer 下方一排 chip 提供 `/help` `/skills` `/clear` `/compact` 快捷命令（点击会把命令回填到输入框以便进一步编辑）；**agent 运行时输入框保持可用**——用户可随时输入并发送「插话」消息（走 `POST /api/session/inject`），消息会被推入运行中 session 的注入队列，agent 在当前工具执行完、下一轮 LLM 调用前自动读取并追加到 transcript，SSE 流会发一条 `injected` 事件通知前端（在助手气泡中内联显示琥珀色 USER 标签 + 插话内容）；placeholder 会切换为"继续发送消息，Agent 将在下一轮看到"提示；运行时也仍有 `停止` 按钮可用
 - 文件上传：输入框左侧的 📎 按钮或拖放文件到输入区域均可添加附件；支持图片（png/jpg/gif/webp）、视频（mp4/mov/avi/webm）、PDF、Office 文档（docx/xlsx/pptx）、CSV、纯文本等；附件会显示为预览条，可单独移除。各类型文件的处理方式：
   - **图片** → base64 编码直接发给多模态 LLM
   - **视频** → 由于当前主流多模态模型（GPT-4o、GPT-4.1 等）尚不支持直接接收视频，需要拆解为模型能理解的格式：ffmpeg 提取关键帧（每 10 秒一帧，最多 4 帧）转为图片 + ffmpeg 提取音频后用 `faster-whisper` 本地模型语音转文字，最终以「关键帧图片 + 带时间戳的语音文本」形式发给 LLM
@@ -252,7 +254,7 @@ Web 端走「邮箱 + 密码」账号体系，每个用户自己的 `session_key
   - **纯文本** → 直接读取
 - 输入以 `/` 开头走 `/api/command` 命令路径，命令回显和输出会作为 system 气泡贴在聊天区里
 - 当 `reply.compacted` 为真时，会插入一条 `[autocompact -> xxx/400k]` 系统气泡
-- 左侧”产物归档”面板按会话分组展示文件，每组显示标题 + 小字 `session_id`（与会话列表一致）；Office 文件、中间脚本、图片等都可直接下载
+- 产物归档现在直接内嵌到会话条目中：每个 `.convo` 行可展开显示该会话在 `workplace/output/<session_id>/` 下的所有文件（按类型图标着色：code / doc / image / table / chart），点击直接下载
 - Web 前端的每条请求都显式绑定到一个 `session_id`；因此可以让会话 A 在后台继续跑，同时切到会话 B 再发起另一条任务，两条任务互不串 transcript
 - 点击 `停止` 会调用 `/api/session/cancel` 给当前 `session_id` 发送取消信号；取消是 best-effort，会在上游 SSE/工具循环检测到后尽快结束
 - transcript 读取时会自动修复“末尾只有 `assistant.tool_use`、但没有对应 `tool_result`”的坏记录，避免异常中断后下一轮继续对话时报错

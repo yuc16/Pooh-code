@@ -586,8 +586,18 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         session_key = self._session_key()
         # 只列出当前 web channel 下的会话，不混入 cli / feishu。
         items = agent.sessions.list_sessions(session_key=session_key)
+        # 为每个 session 附带 token usage，前端会话卡片要用。
         for item in items:
             item["running"] = self.server.runs.is_running(item["session_id"])
+            try:
+                usage = agent.get_context_usage(session_key, session_id=item["session_id"])
+                item["usage"] = {
+                    "tokens": usage.tokens,
+                    "limit": usage.limit,
+                    "display": usage.display,
+                }
+            except Exception:
+                item["usage"] = None
         self._send_json({"ok": True, "sessions": items, **self._state_payload()})
 
     def _handle_upload(self) -> None:

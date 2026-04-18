@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Pooh Code · 登录</title>
     <link rel="icon" type="image/jpeg" href="/static/brand-icon.jpg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" />
     <link rel="stylesheet" href="/static/style.css" />
     <style>
       html, body.auth-page {
@@ -17,35 +20,8 @@
         width: 100vw;
         margin: 0;
         overflow: auto;
-        background: var(--bg, #fafafa);
+        background: var(--bg);
       }
-      .auth-card {
-        width: min(420px, 92vw);
-        padding: 28px 28px 22px;
-        border-radius: 14px;
-        background: var(--bg-soft, #fff);
-        border: 1px solid var(--border, #e5e5e5);
-        box-shadow: 0 10px 30px rgba(0,0,0,0.06);
-      }
-      .auth-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
-      .auth-brand img { width: 36px; height: 36px; border-radius: 8px; }
-      .auth-title { font-weight: 700; font-size: 16px; }
-      .auth-sub { color: var(--fg-dim, #666); font-size: 13px; margin-bottom: 18px; }
-      .auth-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
-      .auth-tab { flex: 1; padding: 8px 10px; text-align: center; border-radius: 8px; cursor: pointer; border: 1px solid var(--border); background: transparent; font-size: 13px; }
-      .auth-tab.active { background: #2f7bff; color: #fff; border-color: #2f7bff; }
-      .auth-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 13px; }
-      .auth-field input {
-        padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg, #fff); font-size: 14px; outline: none;
-      }
-      .auth-field input:focus { border-color: #2f7bff; }
-      .auth-submit {
-        width: 100%; padding: 10px 14px; border-radius: 8px; border: none; background: #2f7bff; color: #fff; font-size: 14px; cursor: pointer;
-      }
-      .auth-submit:disabled { opacity: 0.6; cursor: not-allowed; }
-      .auth-msg { font-size: 12.5px; margin-top: 10px; min-height: 18px; }
-      .auth-msg.error { color: #dc2626; }
-      .auth-msg.ok { color: #059669; }
     </style>
   </head>
   <body class="auth-page">
@@ -53,7 +29,7 @@
       <div class="auth-brand">
         <img src="/static/brand-icon.jpg" alt="Pooh Code" />
         <div>
-          <div class="auth-title">Pooh Code</div>
+          <div class="auth-title">Pooh <em>Code</em></div>
           <div class="auth-sub">请先登录或注册使用</div>
         </div>
       </div>
@@ -126,7 +102,6 @@
           }
         });
 
-        // 已登录用户直接跳回主页
         fetch("/api/auth/me", { credentials: "same-origin" })
           .then((r) => (r.ok ? r.json() : null))
           .then((j) => { if (j && j.ok) window.location.href = "/"; })
