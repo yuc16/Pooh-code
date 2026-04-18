@@ -617,6 +617,59 @@ function enhanceRenderedContent(container) {
       } catch (_) {}
     }
   });
+  bindResizableCommandTables(container);
+}
+
+function bindResizableCommandTables(container = document) {
+  container.querySelectorAll('.cmd-table[data-resizable="1"]').forEach((table) => {
+    if (table.dataset.boundResize === "1") return;
+    table.dataset.boundResize = "1";
+    const key = table.dataset.tableKey || "";
+    const minWidth = Number(table.dataset.minCol || 128);
+    const maxWidth = Number(table.dataset.maxCol || 520);
+    const handle = table.querySelector(".cmd-divider-handle");
+    if (!handle) return;
+
+    if (key) {
+      try {
+        const saved = localStorage.getItem(`pooh.cmdtable.${key}`);
+        if (saved) {
+          const width = Number(saved);
+          if (Number.isFinite(width)) {
+            table.style.setProperty("--cmd-col-width", `${Math.max(minWidth, Math.min(maxWidth, width))}px`);
+          }
+        }
+      } catch (_) {}
+    }
+
+    handle.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = parseFloat(getComputedStyle(table).getPropertyValue("--cmd-col-width")) || 180;
+      handle.setPointerCapture?.(e.pointerId);
+
+      const onMove = (evt) => {
+        const nextWidth = Math.max(minWidth, Math.min(maxWidth, startWidth + evt.clientX - startX));
+        table.style.setProperty("--cmd-col-width", `${nextWidth}px`);
+      };
+      const onUp = () => {
+        try {
+          handle.releasePointerCapture?.(e.pointerId);
+        } catch (_) {}
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        if (key) {
+          try {
+            const width = parseFloat(getComputedStyle(table).getPropertyValue("--cmd-col-width")) || startWidth;
+            localStorage.setItem(`pooh.cmdtable.${key}`, String(width));
+          } catch (_) {}
+        }
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
+  });
 }
 
 function _fmtClockTime(d) {
@@ -720,7 +773,9 @@ function appendMessage(role, text, { scroll = true } = {}) {
     enhanceRenderedContent(shell.body);
     setCopyButtonState(shell.copyBtn, text);
   } else {
-    shell.body.innerHTML = renderInline(text);
+    shell.body.classList.add("rendered");
+    shell.body.innerHTML = renderMarkdown(text);
+    enhanceRenderedContent(shell.body);
   }
   els.chatInner.appendChild(shell.root);
   if (scroll) els.messages.scrollTop = els.messages.scrollHeight;
@@ -757,8 +812,15 @@ function buildHistoryMessageNode(message) {
     const shell = createMessageShell(message.role, { msgId: `m-${_msgIndex++}` });
     if (message.role === "user") {
       _renderUserBodyWithQuote(shell, message.text);
+    } else if (message.role === "assistant") {
+      shell.body.classList.add("rendered");
+      shell.body.innerHTML = renderMarkdown(message.text);
+      enhanceRenderedContent(shell.body);
+      setCopyButtonState(shell.copyBtn, message.text);
     } else {
-      shell.body.innerHTML = renderInline(message.text);
+      shell.body.classList.add("rendered");
+      shell.body.innerHTML = renderMarkdown(message.text);
+      enhanceRenderedContent(shell.body);
     }
     return shell.root;
   }
@@ -919,6 +981,7 @@ function _relTime(iso) {
 }
 
 function _fmtTokens(n) {
+  if (n == null || !Number.isFinite(Number(n))) return "--";
   if (n >= 1000) return (n / 1000).toFixed(n >= 100000 ? 0 : 1) + "k";
   return String(n);
 }
@@ -943,7 +1006,7 @@ function _artifactIconSvg(type) {
   return icons[type] || icons.doc;
 }
 
-async function refreshSessions() {
+async function refreshSessions({ silent = false } = {}) {
   try {
     const data = await api("/api/sessions");
     state.sessions = data.sessions || [];
@@ -951,7 +1014,9 @@ async function refreshSessions() {
     refreshChatTitle();
     renderSessionList();
   } catch (err) {
-    agentStatus.set("error", "加载会话失败", err.message || "");
+    if (!silent) {
+      agentStatus.set("error", "加载会话失败", err.message || "");
+    }
   }
 }
 
@@ -1005,10 +1070,20 @@ function renderSessionList() {
     const label = item.label || item.session_id;
     const relTime = _relTime(item.last_active);
     const usage = item.usage || null;
-    const tokBarHTML = usage && usage.limit ? `
-      <div class="tok-bar" title="${usage.tokens.toLocaleString()} / ${usage.limit.toLocaleString()} tokens">
-        <div class="tok-track"><div class="tok-fill${(usage.tokens / usage.limit) >= 0.75 ? " warn" : ""}" style="width: ${Math.min(100, (usage.tokens / usage.limit) * 100)}%"></div></div>
-        <div class="tok-text">${_fmtTokens(usage.tokens)}<span>/${_fmtTokens(usage.limit)}</span></div>
+    const usageTokens = Number(usage?.tokens);
+    const usageLimit = Number(usage?.limit);
+    const hasUsageLimit = Number.isFinite(usageLimit) && usageLimit > 0;
+    const hasUsageTokens = Number.isFinite(usageTokens) && usageTokens >= 0;
+    const usageRatio = hasUsageLimit && hasUsageTokens ? usageTokens / usageLimit : 0;
+    const usageTitle = hasUsageLimit
+      ? `${hasUsageTokens ? usageTokens.toLocaleString() : "--"} / ${usageLimit.toLocaleString()} tokens`
+      : "";
+    const usageText = hasUsageTokens ? _fmtTokens(usageTokens) : "--";
+    const usageLimitText = hasUsageLimit ? _fmtTokens(usageLimit) : "--";
+    const tokBarHTML = hasUsageLimit ? `
+      <div class="tok-bar" title="${usageTitle}">
+        <div class="tok-track"><div class="tok-fill${usageRatio >= 0.75 ? " warn" : ""}" style="width: ${Math.min(100, usageRatio * 100)}%"></div></div>
+        <div class="tok-text">${escapeHtml(usageText)}<span>/${escapeHtml(usageLimitText)}</span></div>
       </div>` : "";
 
     convo.innerHTML = `
@@ -1740,8 +1815,10 @@ async function switchSession(prefix) {
       body: { session_id_prefix: prefix, session_id: state.sessionId },
     });
     applyState(data);
+    renderSessionList();
+    refreshChatTitle();
     await refreshMessages();
-    window.requestAnimationFrame(refreshSessions);
+    window.requestAnimationFrame(() => refreshSessions({ silent: true }));
     window.setTimeout(refreshFiles, 180);
   } catch (err) {
     agentStatus.set("error", "切换会话失败", err.message);
@@ -1754,11 +1831,13 @@ function setReplyCtx(ctx) {
   if (!els.replyCtx) return;
   if (!ctx) {
     els.replyCtx.classList.add("hidden");
+    syncComposerOffset();
     return;
   }
   els.replyCtx.classList.remove("hidden");
   const snippet = (ctx.text || "").replace(/\s+/g, " ").trim().slice(0, 60);
   els.replyCtxText.textContent = `引用 ${ctx.who}: ${snippet}${snippet.length >= 60 ? "…" : ""}`;
+  syncComposerOffset();
   els.input.focus();
 }
 
@@ -1876,6 +1955,7 @@ function renderFilePreview() {
 
     els.filePreviewBar.appendChild(item);
   }
+  syncComposerOffset();
 }
 
 async function uploadFiles(files) {
@@ -1957,8 +2037,27 @@ function autosize() {
   if (!els.input) return;
   els.input.style.height = "auto";
   els.input.style.height = Math.min(els.input.scrollHeight, 240) + "px";
+  syncComposerOffset();
 }
 els.input?.addEventListener("input", autosize);
+
+function syncComposerOffset() {
+  if (!els.messages || !els.composer) return;
+  const wrap = els.composer.closest(".composer-wrap") || els.composer.parentElement;
+  const height = wrap ? wrap.offsetHeight : els.composer.offsetHeight;
+  const bottomPad = Math.max(170, Math.ceil(height + 28));
+  els.messages.style.paddingBottom = `${bottomPad}px`;
+  if (els.scrollBtn) {
+    els.scrollBtn.style.bottom = `${Math.max(132, bottomPad - 24)}px`;
+  }
+}
+
+if (typeof ResizeObserver !== "undefined" && els.composer) {
+  const composerObserver = new ResizeObserver(() => syncComposerOffset());
+  composerObserver.observe(els.composer);
+  const wrap = els.composer.closest(".composer-wrap") || els.composer.parentElement;
+  if (wrap) composerObserver.observe(wrap);
+}
 
 els.btnLogout?.addEventListener("click", logout);
 els.btnNew?.addEventListener("click", newSession);
@@ -2009,11 +2108,12 @@ els.sessionSearch?.addEventListener("input", () => {
 document.querySelectorAll(".chip[data-cmd]").forEach((chip) => {
   chip.addEventListener("click", () => {
     const cmd = chip.dataset.cmd;
+    if (!cmd) return;
     if (els.input) {
-      els.input.value = cmd;
+      els.input.value = "";
       autosize();
-      els.input.focus();
     }
+    sendMessage(cmd);
   });
 });
 
@@ -2059,5 +2159,6 @@ bindMinimap();
   }
   await Promise.all([refreshMessages(), refreshSessions(), refreshFiles()]);
   agentStatus.set("idle", "就绪", "等待你的指令");
+  syncComposerOffset();
   els.input?.focus();
 })();

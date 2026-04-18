@@ -158,12 +158,19 @@ input, textarea { font: inherit; color: inherit; }
 /* ========== Left pane ========== */
 .logo { display: flex; align-items: center; gap: 10px; user-select: none; }
 .logo-mark {
-  width: 30px; height: 30px;
-  border-radius: 9px;
-  background: radial-gradient(circle at 30% 30%, oklch(0.82 0.11 65), oklch(0.58 0.14 45));
-  display: grid; place-items: center;
-  color: oklch(0.985 0.01 80);
-  box-shadow: inset 0 -2px 4px oklch(0.30 0.05 40 / 0.3), var(--shadow-1);
+  width: 34px; height: 34px;
+  border-radius: 10px;
+  overflow: hidden;
+  flex: 0 0 auto;
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow-1);
+  background: var(--bg-raised);
+}
+.logo-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 .logo-name {
   font-family: var(--font-serif);
@@ -172,6 +179,10 @@ input, textarea { font: inherit; color: inherit; }
   font-weight: 500;
   letter-spacing: -0.005em;
   color: var(--ink);
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
 }
 .logo-name em { font-style: italic; font-weight: 500; color: var(--accent-ink); }
 
@@ -783,8 +794,147 @@ input, textarea { font: inherit; color: inherit; }
   background: var(--bg-sunken);
   border: 1px dashed var(--rule);
   border-radius: 10px;
-  display: inline-block;
+  display: block;
+  width: min(760px, 100%);
+  font-family: var(--font-sans);
+  line-height: 1.7;
+}
+.msg.s .bubble .body.rendered > :first-child { margin-top: 0; }
+.msg.s .bubble .body.rendered > :last-child { margin-bottom: 0; }
+.msg.s .bubble .body.rendered h2,
+.msg.s .bubble .body.rendered h3 {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  margin: 0 0 10px;
+  color: var(--ink);
+}
+.msg.s .bubble .body.rendered p {
+  margin: 0 0 10px;
+}
+.msg.s .bubble .body.rendered table {
+  margin: 8px 0;
+  background: var(--bg-raised);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.msg.s .bubble .body.rendered th,
+.msg.s .bubble .body.rendered td {
+  padding: 8px 10px;
+  vertical-align: top;
+}
+.msg.s .bubble .body.rendered th {
   font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.msg.s .bubble .body.rendered td:first-child code {
+  font-size: 12px;
+}
+
+.cmd-panel {
+  margin: 2px 0;
+}
+.cmd-title {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  color: var(--ink);
+  margin-bottom: 12px;
+}
+.cmd-table {
+  --cmd-col-width: 220px;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+.cmd-row {
+  display: grid;
+  grid-template-columns: minmax(0, var(--cmd-col-width)) 16px minmax(0, 1fr);
+  align-items: stretch;
+}
+.cmd-row + .cmd-row {
+  border-top: 1px solid var(--rule-soft);
+}
+.cmd-cell {
+  min-width: 0;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+.cmd-head-row {
+  background: linear-gradient(to bottom, var(--bg), var(--bg-sunken));
+}
+.cmd-head-row .cmd-cell {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.cmd-head {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+.cmd-name {
+  white-space: nowrap;
+  overflow: hidden;
+}
+.cmd-name code {
+  display: inline-block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cmd-desc {
+  color: var(--ink-3);
+}
+.cmd-divider-slot {
+  position: relative;
+  min-width: 16px;
+}
+.cmd-divider-slot::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--rule);
+}
+.cmd-divider-handle {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow-1);
+  cursor: col-resize;
+}
+.cmd-divider-handle::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--ink-4);
+}
+.cmd-divider-handle:hover {
+  border-color: oklch(from var(--accent) l c h / 0.34);
+  background: var(--bg-raised);
+}
+.cmd-note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+  line-height: 1.6;
 }
 
 /* Message tools (引用 / 复制 / 时间) */

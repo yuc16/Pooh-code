@@ -34,7 +34,7 @@ if str(_SRC_DIR) not in sys.path:
 
 from pooh_code.agent import PoohAgent  # noqa: E402
 from pooh_code.auth_db import AuthError, User, get_store  # noqa: E402
-from pooh_code.commands import CommandProcessor  # noqa: E402
+from pooh_code.commands import COMMAND_CATALOG, TOOL_DESCRIPTION_MAP, CommandProcessor  # noqa: E402
 from pooh_code.config import load_settings  # noqa: E402
 from pooh_code.output_files import (  # noqa: E402
     delete_session_output_dir,
@@ -61,34 +61,9 @@ MIME_TYPES = {
     ".json": "application/json; charset=utf-8",
     ".svg": "image/svg+xml",
     ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
     ".ico": "image/x-icon",
-}
-
-WELCOME_COMMANDS = [
-    {"name": "/help", "desc": "查看全部命令"},
-    {"name": "/new", "desc": "新建并切换会话"},
-    {"name": "/switch", "desc": "切换历史会话"},
-    {"name": "/compact", "desc": "压缩上下文"},
-    {"name": "/ctx", "desc": "查看上下文占用"},
-    {"name": "/sessions", "desc": "列出当前会话"},
-    {"name": "/skills", "desc": "查看已加载技能"},
-    {"name": "/model", "desc": "查看或切换模型"},
-    {"name": "/clear", "desc": "清空当前会话"},
-]
-
-WELCOME_TOOL_LABELS = {
-    "bash": "在 workplace 沙箱内执行 Shell 命令，适合运行脚本、查看状态和做本地验证。",
-    "read_file": "读取文件内容，可用于查看代码、配置、文档和中间产物。",
-    "write_file": "新建或覆盖文件，适合生成脚本、文档、配置和交付文件。",
-    "edit_file": "按文本替换修改文件，适合在现有实现上做精确变更。",
-    "list_dir": "查看目录结构，快速确认文件和子目录分布。",
-    "glob": "按模式查找文件，适合批量定位模块、资源和配置文件。",
-    "grep": "使用 ripgrep 搜索仓库内容，适合定位函数、字段和引用关系。",
-    "web_fetch": "已知具体 URL 时抓取网页正文，自动去掉导航和广告噪声。",
-    "web_search": "联网搜索候选结果，适合快速找资料、新闻或外部说明。",
-    "web_search_and_read": "联网搜索并自动抓取正文，适合需要深入阅读的场景。",
-    "use_skill": "加载某个 skill 的完整工作流说明，再按该技能流程执行任务。",
-    "spawn_agent": "启动受限子代理处理边界清晰的子任务，降低主上下文压力。",
 }
 
 # 文件下载支持的 MIME 类型
@@ -481,11 +456,11 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 "display": usage.display,
             },
             "capabilities": {
-                "commands": WELCOME_COMMANDS,
+                "commands": COMMAND_CATALOG,
                 "tools": [
                     {
                         "name": spec.get("name", ""),
-                        "description": WELCOME_TOOL_LABELS.get(
+                        "description": TOOL_DESCRIPTION_MAP.get(
                             spec.get("name", ""),
                             spec.get("description", ""),
                         ),
