@@ -1,10 +1,10 @@
 const STORAGE_KEY = 'pooh-farm-save-v1';
 
 const CROPS = [
-  { id: 'carrot', name: '胡萝卜', icon: '🥕', cost: 12, reward: 24, growTime: 12, exp: 15, unlockLevel: 1 },
-  { id: 'corn', name: '玉米', icon: '🌽', cost: 20, reward: 42, growTime: 20, exp: 24, unlockLevel: 2 },
-  { id: 'tomato', name: '番茄', icon: '🍅', cost: 30, reward: 65, growTime: 30, exp: 36, unlockLevel: 3 },
-  { id: 'pumpkin', name: '南瓜', icon: '🎃', cost: 48, reward: 108, growTime: 48, exp: 56, unlockLevel: 4 }
+  { id: 'carrot', name: '胡萝卜', mark: '萝', cost: 12, reward: 24, growTime: 12, exp: 15, unlockLevel: 1 },
+  { id: 'corn', name: '玉米', mark: '玉', cost: 20, reward: 42, growTime: 20, exp: 24, unlockLevel: 2 },
+  { id: 'tomato', name: '番茄', mark: '茄', cost: 30, reward: 65, growTime: 30, exp: 36, unlockLevel: 3 },
+  { id: 'pumpkin', name: '南瓜', mark: '瓜', cost: 48, reward: 108, growTime: 48, exp: 56, unlockLevel: 4 }
 ];
 
 const DEFAULT_STATE = {
@@ -67,6 +67,10 @@ function getExpTarget(level = state.level) {
   return 100 + (level - 1) * 50;
 }
 
+function getBadgeClass(cropId) {
+  return `crop-badge--${cropId}`;
+}
+
 function addLog(message) {
   const time = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
   state.logs.unshift(`${time} · ${message}`);
@@ -94,18 +98,13 @@ function getPlotProgress(plot) {
   const elapsed = Math.floor((Date.now() - plot.plantedAt) / 1000);
   const ratio = Math.min(elapsed / crop.growTime, 1);
   const remaining = Math.max(crop.growTime - elapsed, 0);
-  return {
-    ready: elapsed >= crop.growTime,
-    ratio,
-    remaining
-  };
+  return { ready: elapsed >= crop.growTime, ratio, remaining };
 }
 
 function formatDuration(seconds) {
   if (seconds <= 0) return '已成熟';
   if (seconds < 60) return `${seconds} 秒后成熟`;
-  const minutes = Math.ceil(seconds / 60);
-  return `${minutes} 分钟后成熟`;
+  return `${Math.ceil(seconds / 60)} 分钟后成熟`;
 }
 
 function getProgressLabel() {
@@ -118,17 +117,7 @@ function getProgressLabel() {
 function updateStartScreen() {
   const hasSave = Boolean(localStorage.getItem(STORAGE_KEY));
   elements.continueBtn.style.display = hasSave ? 'inline-flex' : 'none';
-  if (state.hasStarted) {
-    elements.startScreen.classList.add('is-hidden');
-  } else {
-    elements.startScreen.classList.remove('is-hidden');
-  }
-}
-
-function hideStartScreen() {
-  state.hasStarted = true;
-  saveState();
-  updateStartScreen();
+  elements.startScreen.classList.toggle('is-hidden', state.hasStarted);
 }
 
 function startNewGame() {
@@ -165,9 +154,11 @@ function renderSeeds() {
   CROPS.forEach((crop) => {
     const template = elements.seedCardTemplate.content.cloneNode(true);
     const button = template.querySelector('.seed-card');
+    const badge = template.querySelector('.crop-badge');
     const unlocked = state.level >= crop.unlockLevel;
 
-    template.querySelector('.seed-icon').textContent = crop.icon;
+    badge.textContent = crop.mark;
+    badge.classList.add(getBadgeClass(crop.id));
     template.querySelector('.seed-name').textContent = crop.name;
     template.querySelector('.seed-cost').textContent = `${crop.cost} 金币`;
     template.querySelector('.seed-gain').textContent = `收益 ${crop.reward}`;
@@ -181,6 +172,7 @@ function renderSeeds() {
 
     if (!unlocked) {
       button.classList.add('is-locked');
+      button.setAttribute('aria-disabled', 'true');
     }
 
     button.addEventListener('click', () => {
@@ -209,15 +201,18 @@ function renderFarm() {
     button.className = `plot ${crop ? '' : 'empty'} ${progress.ready ? 'ready' : ''}`.trim();
 
     if (!crop) {
+      const selected = getCrop(state.selectedCropId);
       button.innerHTML = `
-        <div class="plot__name">空地 #${plot.id}</div>
-        <div class="plot__crop">🌱</div>
-        <div class="plot__status">点击种下 ${getCrop(state.selectedCropId)?.name ?? '作物'}</div>
+        <div class="plot__id">土地 #${plot.id}</div>
+        <div class="plot__badge"><span class="crop-badge crop-badge--empty">田</span></div>
+        <div class="plot__name">空地</div>
+        <div class="plot__status">点击种下 ${selected?.name ?? '作物'}</div>
       `;
     } else {
       button.innerHTML = `
+        <div class="plot__id">土地 #${plot.id}</div>
+        <div class="plot__badge"><span class="crop-badge ${getBadgeClass(crop.id)}">${crop.mark}</span></div>
         <div class="plot__name">${crop.name}</div>
-        <div class="plot__crop">${crop.icon}</div>
         <div class="plot__status">${progress.ready ? '可以收获了' : formatDuration(progress.remaining)}</div>
         <div class="plot__timer">
           <div class="progress-bar"><div class="progress-fill" style="width:${progress.ratio * 100}%"></div></div>
@@ -295,13 +290,10 @@ function handlePlotClick(plotId) {
 
   if (!plot.cropId) {
     plantCrop(plot);
+  } else if (getPlotProgress(plot).ready) {
+    harvestCrop(plot);
   } else {
-    const progress = getPlotProgress(plot);
-    if (progress.ready) {
-      harvestCrop(plot);
-    } else {
-      speedUpPlot(plot);
-    }
+    speedUpPlot(plot);
   }
 
   update();

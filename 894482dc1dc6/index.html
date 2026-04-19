@@ -3,137 +3,179 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>农场养成游戏</title>
+    <title>田园小农场</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="sky-decor sky-decor--left"></div>
-    <div class="sky-decor sky-decor--right"></div>
+    <div class="paper-noise" aria-hidden="true"></div>
 
     <section id="startScreen" class="start-screen">
-      <div class="start-screen__backdrop"></div>
-      <div class="start-card">
-        <div class="start-card__art" aria-hidden="true">
-          <div class="sun"></div>
-          <div class="cloud cloud--one"></div>
-          <div class="cloud cloud--two"></div>
-          <div class="hill hill--back"></div>
-          <div class="hill hill--front"></div>
-          <div class="barn">
-            <span class="barn-roof"></span>
-            <span class="barn-door"></span>
+      <div class="start-screen__scrim"></div>
+      <div class="start-sheet">
+        <div class="sheet-art" aria-hidden="true">
+          <div class="sheet-sun"></div>
+          <div class="sheet-cloud sheet-cloud--one"></div>
+          <div class="sheet-cloud sheet-cloud--two"></div>
+          <div class="sheet-hill sheet-hill--back"></div>
+          <div class="sheet-hill sheet-hill--front"></div>
+          <div class="sheet-field"></div>
+          <div class="sheet-house">
+            <span class="sheet-house__roof"></span>
+            <span class="sheet-house__door"></span>
           </div>
-          <div class="tree tree--left"></div>
-          <div class="tree tree--right"></div>
+          <div class="sheet-tree sheet-tree--left"></div>
+          <div class="sheet-tree sheet-tree--right"></div>
+          <div class="sheet-note sheet-note--top">晨间计划</div>
+          <div class="sheet-note sheet-note--bottom">先种胡萝卜</div>
         </div>
-        <div class="start-card__content">
-          <p class="eyebrow">Farm Simulation Game</p>
+
+        <div class="sheet-copy">
+          <p class="eyebrow">Cozy Farm Journal</p>
           <h1>田园小农场</h1>
-          <p class="subtitle start-subtitle">
-            在柔和的晨光里经营自己的农场：播种、催熟、收获、扩建，慢慢把一块小田地养成热闹庄园。
+          <p class="lead">
+            一款温柔、轻松的农场养成小游戏。像翻开一本手账那样，记录播种、收获与扩建，让小农场慢慢长成理想庄园。
           </p>
 
-          <div class="start-features">
-            <div class="feature-chip">🌱 轻度养成</div>
-            <div class="feature-chip">🎨 清新插画风</div>
-            <div class="feature-chip">💾 自动本地存档</div>
+          <div class="feature-row">
+            <span class="tag-chip">纸张手账风</span>
+            <span class="tag-chip">轻度经营养成</span>
+            <span class="tag-chip">自动本地存档</span>
+          </div>
+
+          <div class="intro-card">
+            <div class="intro-card__title">开局资源</div>
+            <div class="intro-metrics">
+              <div><strong>120</strong><span>起始金币</span></div>
+              <div><strong>3</strong><span>初始土地</span></div>
+              <div><strong>4</strong><span>可解锁作物</span></div>
+            </div>
           </div>
 
           <div class="start-actions">
-            <button id="startBtn" class="hero-btn">开始经营</button>
-            <button id="continueBtn" class="ghost-btn start-ghost-btn">继续上次进度</button>
+            <button id="startBtn" class="primary-btn primary-btn--hero">开始新农场</button>
+            <button id="continueBtn" class="secondary-btn secondary-btn--ghost">继续上次进度</button>
           </div>
 
-          <div class="start-tips">
-            <span>初始资源：120 金币 / 3 块土地</span>
-            <span>推荐：先种胡萝卜快速升级</span>
-          </div>
+          <p class="sheet-footnote">建议先快速收胡萝卜升级，再解锁高收益作物。</p>
         </div>
       </div>
     </section>
 
     <div class="app-shell">
       <div class="app">
-        <header class="topbar card hero-topbar">
-          <div class="hero-copy">
-            <p class="eyebrow">前端农场养成游戏</p>
-            <h1>田园小农场</h1>
-            <p class="subtitle">种植、收获、扩建，把你的农场经营起来。</p>
-            <div class="hero-badges">
-              <span class="hero-badge">今日天气 · 晴朗</span>
+        <header class="hero paper-card">
+          <div class="hero__copy">
+            <p class="eyebrow">Farm Management Diary</p>
+            <h2 class="hero__title">今天也照顾好你的农场</h2>
+            <p class="hero__desc">用更舒服的节奏种植、收获和扩建，把每一次经营都写进属于自己的田园手账。</p>
+            <div class="hero__badges">
+              <span class="hero-badge">晴朗天气</span>
               <span class="hero-badge">适合播种</span>
+              <span class="hero-badge">自然生长中</span>
             </div>
           </div>
-          <div class="hero-preview" aria-hidden="true">
-            <div class="preview-sun"></div>
-            <div class="preview-cloud"></div>
-            <div class="preview-house"></div>
-            <div class="preview-ground"></div>
-            <div class="preview-sprout preview-sprout--one"></div>
-            <div class="preview-sprout preview-sprout--two"></div>
+          <div class="hero__art" aria-hidden="true">
+            <div class="mini-sun"></div>
+            <div class="mini-field mini-field--one"></div>
+            <div class="mini-field mini-field--two"></div>
+            <div class="mini-field mini-field--three"></div>
+            <div class="mini-leaf mini-leaf--one"></div>
+            <div class="mini-leaf mini-leaf--two"></div>
+            <div class="mini-pin"></div>
           </div>
-          <button id="resetBtn" class="ghost-btn">重置进度</button>
+          <button id="resetBtn" class="secondary-btn secondary-btn--ghost">重置进度</button>
         </header>
 
         <main class="layout">
-          <section class="panel card status-panel">
-            <div class="panel-header panel-header--tight">
+          <section class="paper-card panel status-panel">
+            <div class="panel-heading">
               <div>
-                <h2>农场状态</h2>
-                <p>持续收获来升级并解锁高收益作物。</p>
+                <p class="panel-kicker">Farm Status</p>
+                <h3>农场状态</h3>
               </div>
-              <div class="status-mark">经营中</div>
+              <span class="panel-stamp">经营中</span>
             </div>
+
             <div class="stats-grid">
-              <div class="stat stat-gold"><span>金币</span><strong id="goldStat">0</strong></div>
-              <div class="stat"><span>等级</span><strong id="levelStat">1</strong></div>
-              <div class="stat"><span>经验</span><strong id="expStat">0 / 100</strong></div>
-              <div class="stat"><span>空地</span><strong id="plotStat">0</strong></div>
+              <article class="stat-card stat-card--gold">
+                <span>金币</span>
+                <strong id="goldStat">0</strong>
+              </article>
+              <article class="stat-card">
+                <span>等级</span>
+                <strong id="levelStat">1</strong>
+              </article>
+              <article class="stat-card">
+                <span>经验</span>
+                <strong id="expStat">0 / 100</strong>
+              </article>
+              <article class="stat-card">
+                <span>土地</span>
+                <strong id="plotStat">0</strong>
+              </article>
             </div>
-            <div class="progress-wrap">
-              <div class="progress-label"><span>成长进度</span><span id="progressText">继续努力</span></div>
+
+            <div class="progress-block">
+              <div class="progress-meta">
+                <span>成长记录</span>
+                <span id="progressText">继续努力</span>
+              </div>
               <div class="progress-bar"><div id="expBar" class="progress-fill"></div></div>
             </div>
           </section>
 
-          <section class="panel card market-panel">
-            <div class="panel-header">
-              <h2>种子商店</h2>
-              <p>选择一种作物，然后点击土地种下它。</p>
+          <section class="paper-card panel market-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Seed Shop</p>
+                <h3>种子商店</h3>
+              </div>
+              <span class="panel-caption">先选种子，再点土地</span>
             </div>
             <div id="seedList" class="seed-list"></div>
           </section>
 
-          <section class="panel card farm-panel">
-            <div class="panel-header">
-              <h2>农田</h2>
-              <p>成熟后点击收获；未成熟时可花费少量金币催熟。</p>
+          <section class="paper-card panel actions-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Actions</p>
+                <h3>经营操作</h3>
+              </div>
             </div>
-            <div id="farmGrid" class="farm-grid"></div>
-          </section>
-
-          <section class="panel card actions-panel">
-            <h2>经营操作</h2>
             <div class="action-list">
               <button id="buyPlotBtn" class="primary-btn">扩建一块土地（50 金币起）</button>
               <button id="speedUpBtn" class="secondary-btn">全田催熟一次（20 金币）</button>
               <button id="collectAllBtn" class="secondary-btn">一键收获成熟作物</button>
             </div>
-            <div class="tips tips-card">
-              <p>玩法说明：</p>
+            <div class="tips-card">
+              <p class="tips-card__title">经营小贴士</p>
               <ul>
-                <li>初始有 3 块土地和 120 金币。</li>
-                <li>不同作物成熟时间和收益不同。</li>
-                <li>升级后会解锁更高价值作物。</li>
-                <li>进度会自动保存在浏览器本地。</li>
+                <li>先种低成本作物快速起步。</li>
+                <li>升级后会解锁更高收益作物。</li>
+                <li>未成熟作物可单块或全田催熟。</li>
+                <li>数据会自动保存在浏览器本地。</li>
               </ul>
             </div>
           </section>
 
-          <section class="panel card log-panel">
-            <div class="panel-header">
-              <h2>农场日志</h2>
-              <p>最近 8 条操作记录</p>
+          <section class="paper-card panel farm-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Field Notes</p>
+                <h3>农田</h3>
+              </div>
+              <span class="panel-caption">成熟后点击收获</span>
+            </div>
+            <div id="farmGrid" class="farm-grid"></div>
+          </section>
+
+          <section class="paper-card panel log-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Diary</p>
+                <h3>农场日志</h3>
+              </div>
+              <span class="panel-caption">最近 8 条记录</span>
             </div>
             <ul id="logList" class="log-list"></ul>
           </section>
@@ -143,15 +185,17 @@
 
     <template id="seedCardTemplate">
       <button class="seed-card" type="button">
-        <div class="seed-card__top">
-          <span class="seed-icon"></span>
-          <span class="seed-name"></span>
+        <div class="seed-card__header">
+          <span class="crop-badge"></span>
+          <div>
+            <div class="seed-name"></div>
+            <small class="seed-time"></small>
+          </div>
         </div>
         <div class="seed-card__meta">
           <span class="seed-cost"></span>
           <span class="seed-gain"></span>
         </div>
-        <small class="seed-time"></small>
       </button>
     </template>
 
