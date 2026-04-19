@@ -22,6 +22,8 @@
   - 联网搜索，适合快速找候选结果
 - `web_search_and_read`
   - 联网搜索并自动抓取 top 结果正文
+- `paper_search`
+  - 通过 OpenAlex 检索论文并返回结构化元数据
 - `use_skill`
   - 加载某个 skill 的完整说明
 - `spawn_agent`
@@ -79,6 +81,7 @@ output/<session_id>/
 - 有具体 URL 时优先 `web_fetch`
 - 需要快速找信息时用 `web_search`
 - 需要深入读内容时用 `web_search_and_read`
+- 涉及论文、文献、参考文献、综述时优先用 `paper_search`
 
 ## 技能使用规则
 

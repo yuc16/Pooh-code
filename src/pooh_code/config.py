@@ -31,6 +31,7 @@ class ReasoningConfig:
 class SearchConfig:
     tavily_api_key: str = ""
     brave_api_key: str = ""
+    openalex_api_key: str = ""
 
 
 @dataclass
@@ -91,6 +92,8 @@ def _apply_env_from_settings(cfg: AgentConfig) -> None:
         os.environ["TAVILY_API_KEY"] = cfg.search.tavily_api_key
     if cfg.search.brave_api_key:
         os.environ["BRAVE_API_KEY"] = cfg.search.brave_api_key
+    if cfg.search.openalex_api_key:
+        os.environ["OPENALEX_API_KEY"] = cfg.search.openalex_api_key
     if cfg.image.api_key:
         os.environ["AIHUBMIX_API_KEY"] = cfg.image.api_key
     if cfg.reasoning.effort:
@@ -133,6 +136,7 @@ def load_settings(path: Path | None = None) -> AgentConfig:
         search=SearchConfig(
             tavily_api_key=search.get("tavily_api_key", "") or "",
             brave_api_key=search.get("brave_api_key", "") or "",
+            openalex_api_key=search.get("openalex_api_key", "") or "",
         ),
         image=ImageGenerationConfig(
             api_key=image.get("api_key", "") or os.environ.get("AIHUBMIX_API_KEY", "") or "",

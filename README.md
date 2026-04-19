@@ -192,6 +192,8 @@ Skills 是一种"按需加载的操作手册"。每个 skill 是 [workplace/runt
 
 现在 skills 已改成按请求自动刷新：新增目录、修改 `SKILL.md`、删除 skill 后，无需重启服务，下一次请求、下一次 `/skills`、以及下一次生成 system prompt 时都会重新扫描 [workplace/runtime/skills](/Users/wangyc/Desktop/projects/Pooh-code/workplace/runtime/skills) 并更新 `use_skill` 工具的可选列表。
 
+当前内置 skill 里，新增了一个面向论文研究的 [paper-research](/Users/wangyc/Desktop/projects/Pooh-code/workplace/runtime/skills/paper-research/SKILL.md)：涉及文献综述、相关工作、参考文献整理等任务时，优先要求 agent 先调用 `paper_search`，再按需补 `web_fetch` / `web_search_and_read` 做精读和背景补充；默认回答格式也被收紧为“每篇论文说明块内直接附 DOI / 链接”，不再默认把参考文献集中堆到文末。
+
 ## 飞书
 
 飞书配置在：
@@ -350,15 +352,23 @@ SSE 连接使用 `Connection: close` 并在服务端强制 `self.close_connectio
 
 普通接口返回 JSON，形如 `{"ok": true, ...}`，失败时为 `{"ok": false, "error": "..."}`；`/api/chat/stream` 返回 `text/event-stream`，每帧 `data: {"type": "...", ...}\n\n`，流末尾会有一行 `data: [DONE]\n\n`。
 
-## 联网搜索
+## 联网与论文检索
 
-`pooh-code` 提供三个联网工具，agent 在推理过程中会自主决定何时调用：
+`pooh-code` 现在提供四个外部检索相关工具，agent 在推理过程中会自主决定何时调用：
 
 | 工具 | 用途 | 说明 |
 | --- | --- | --- |
 | `web_search` | 联网搜索 | 默认多引擎并行（Tavily + Brave），按 URL 去重合并；多源命中的结果自动排前面；全部失败时降级到 DuckDuckGo。可通过 `engine` 参数指定单一引擎 |
 | `web_fetch` | 抓取网页正文 | 自动识别正文区域（`<article>`/`<main>` 等），去除导航、广告、脚本等干扰内容 |
 | `web_search_and_read` | 搜索 + 自动阅读 | 先多引擎搜索再自动抓取 top 结果的完整正文，适合需要深入了解的场景 |
+| `paper_search` | 学术论文检索 | 通过 OpenAlex 检索论文，返回标题、作者、年份、venue、DOI、被引数、开放获取链接、摘要，以及 `inline_citation` / `reference_text` 这类引用友好字段；适合论文、综述、related work、参考文献任务 |
+
+### 使用建议
+
+- 通用网页资料、新闻、产品说明：优先 `web_search`
+- 已知具体网页链接：优先 `web_fetch`
+- 需要自动补读网页正文：用 `web_search_and_read`
+- 涉及论文、文献综述、参考文献：优先 `paper_search`
 
 ### 多引擎策略
 
@@ -374,7 +384,8 @@ SSE 连接使用 `Connection: close` 并在服务端强制 `self.close_connectio
 {
   "search": {
     "tavily_api_key": "tvly-xxx",
-    "brave_api_key": "BSA01..."
+    "brave_api_key": "BSA01...",
+    "openalex_api_key": "oa-xxx"
   }
 }
 ```
@@ -382,6 +393,8 @@ SSE 连接使用 `Connection: close` 并在服务端强制 `self.close_connectio
 - 两个 key 都配 → 双引擎并行合并（推荐）
 - 只配一个 → 单引擎 + DuckDuckGo 兜底
 - 都不配 → 全部回落 DuckDuckGo
+- `paper_search` 默认走 OpenAlex；如果配置了 `openalex_api_key`，会自动带上 `api_key` 调用，以提升论文检索的稳定性和额度
+- `paper-research` skill 会优先利用 `paper_search` 返回的 `inline_citation` 和 `reference_text` 组织回答，但默认展示会把 DOI / 链接放在每篇论文说明块内部，而不是统一放到文末参考文献区
 
 ## 推理配置
 

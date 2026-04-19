@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, ClassVar
@@ -23,6 +24,11 @@ from .paths import CACHE_DIR, WORKPLACE_DIR
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_OUTPUT = 40000
+_PAPER_RESULT_TYPES = {"article", "preprint", "review", "book-chapter", "book", "dissertation"}
+_PAPER_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into", "is",
+    "of", "on", "or", "the", "to", "with",
+}
 
 
 def _find_uv_path() -> str | None:
@@ -50,8 +56,13 @@ def _get_brave_key() -> str:
     return os.getenv("BRAVE_API_KEY", "")
 
 
+def _get_openalex_key() -> str:
+    return os.getenv("OPENALEX_API_KEY", "")
+
+
 _TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 _BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
+_OPENALEX_WORKS_URL = "https://api.openalex.org/works"
 
 # 需要移除的非正文标签
 _STRIP_TAGS = {"script", "style", "noscript", "nav", "footer", "header", "aside", "iframe", "svg"}
@@ -473,6 +484,48 @@ class ToolRegistry:
             ),
             self._web_search_and_read,
         )
+        self._register(
+            ToolSpec(
+                name="paper_search",
+                description=(
+                    "Search scholarly papers via OpenAlex and return structured metadata "
+                    "such as title, authors, year, venue, DOI, citations, open-access links, "
+                    "and abstract snippets. Prefer this over generic web search for论文/文献/参考文献 tasks."
+                ),
+                input_schema={
+                    "type": "object",
+                    "required": ["query"],
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Paper search query, e.g. topic keywords, title, DOI, or question phrase.",
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Number of papers to return (default 8, max 15).",
+                        },
+                        "from_year": {
+                            "type": "integer",
+                            "description": "Optional lower bound of publication year.",
+                        },
+                        "to_year": {
+                            "type": "integer",
+                            "description": "Optional upper bound of publication year.",
+                        },
+                        "open_access_only": {
+                            "type": "boolean",
+                            "description": "If true, only return papers marked as open access.",
+                        },
+                        "sort": {
+                            "type": "string",
+                            "enum": ["relevance", "cited_by_count", "publication_year"],
+                            "description": "Sort strategy. Default relevance.",
+                        },
+                    },
+                },
+            ),
+            self._paper_search,
+        )
         if self.enable_subagents and self.spawn_agent_callback is not None:
             self._register(
                 ToolSpec(
@@ -683,6 +736,82 @@ class ToolRegistry:
 
         return _truncate("\n".join(output_parts))
 
+    # ── papers: OpenAlex ────────────────────────────────────────
+
+    def _paper_search(
+        self,
+        query: str,
+        max_results: int = 8,
+        from_year: int | None = None,
+        to_year: int | None = None,
+        open_access_only: bool = False,
+        sort: str = "relevance",
+    ) -> str:
+        max_results = min(max(max_results, 1), 15)
+        candidate_count = min(max(max_results * 4, 15), 25)
+        params: dict[str, Any] = {
+            "search": query,
+            "per-page": candidate_count,
+            "select": ",".join(
+                [
+                    "id",
+                    "display_name",
+                    "publication_year",
+                    "publication_date",
+                    "doi",
+                    "type",
+                    "cited_by_count",
+                    "open_access",
+                    "authorships",
+                    "primary_location",
+                    "best_oa_location",
+                    "abstract_inverted_index",
+                ]
+            ),
+        }
+        filters: list[str] = []
+        if from_year is not None:
+            filters.append(f"from_publication_date:{int(from_year)}-01-01")
+        if to_year is not None:
+            filters.append(f"to_publication_date:{int(to_year)}-12-31")
+        if open_access_only:
+            filters.append("is_oa:true")
+        if filters:
+            params["filter"] = ",".join(filters)
+        if sort == "cited_by_count":
+            params["sort"] = "cited_by_count:desc"
+        elif sort == "publication_year":
+            params["sort"] = "publication_year:desc"
+        openalex_key = _get_openalex_key()
+        if openalex_key:
+            params["api_key"] = openalex_key
+
+        headers = {
+            "User-Agent": "pooh-code (python; scholarly search via OpenAlex)",
+            "Accept": "application/json",
+        }
+        response = httpx.get(_OPENALEX_WORKS_URL, params=params, headers=headers, timeout=30.0)
+        response.raise_for_status()
+        data = response.json()
+        raw_results = data.get("results", [])
+        formatted = _rank_openalex_results(raw_results, query, sort=sort, limit=max_results)
+        return json.dumps(
+            {
+                "engine": "openalex",
+                "query": query,
+                "count_returned": len(formatted),
+                "filters": {
+                    "from_year": from_year,
+                    "to_year": to_year,
+                    "open_access_only": open_access_only,
+                    "sort": sort or "relevance",
+                },
+                "results": formatted,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
 
 # ═══════════════════════════════════════════════════════════════
 # 模块级辅助函数
@@ -745,6 +874,235 @@ def _fetch_and_extract(url: str, limit: int = 12000) -> str:
     response.raise_for_status()
     text = _extract_readable_text(response.text)
     return _truncate(text, limit)
+
+
+def _decode_openalex_abstract(inverted_index: dict[str, Any] | None) -> str:
+    if not isinstance(inverted_index, dict) or not inverted_index:
+        return ""
+    pairs: list[tuple[int, str]] = []
+    for token, positions in inverted_index.items():
+        if not isinstance(positions, list):
+            continue
+        for pos in positions:
+            if isinstance(pos, int):
+                pairs.append((pos, token))
+    if not pairs:
+        return ""
+    pairs.sort(key=lambda item: item[0])
+    return " ".join(token for _, token in pairs)
+
+
+def _normalize_doi(doi: str | None) -> str:
+    value = (doi or "").strip()
+    if not value:
+        return ""
+    if value.startswith("https://doi.org/"):
+        return value
+    if value.lower().startswith("doi:"):
+        value = value[4:].strip()
+    return f"https://doi.org/{value}"
+
+
+def _authors_string(authorships: Any, limit: int = 6) -> str:
+    if not isinstance(authorships, list):
+        return ""
+    names: list[str] = []
+    for authorship in authorships:
+        if not isinstance(authorship, dict):
+            continue
+        author = authorship.get("author") or {}
+        name = str(author.get("display_name", "")).strip()
+        if name:
+            names.append(name)
+    if len(names) > limit:
+        return ", ".join(names[:limit]) + f", 等 {len(names)} 位作者"
+    return ", ".join(names)
+
+
+def _authors_list(authorships: Any, limit: int = 20) -> list[str]:
+    if not isinstance(authorships, list):
+        return []
+    names: list[str] = []
+    for authorship in authorships:
+        if not isinstance(authorship, dict):
+            continue
+        author = authorship.get("author") or {}
+        name = str(author.get("display_name", "")).strip()
+        if name:
+            names.append(name)
+        if len(names) >= limit:
+            break
+    return names
+
+
+def _citation_short(authors: list[str], year: int | None) -> str:
+    if not authors:
+        return f"(匿名, {year or 'n.d.'})"
+    first = authors[0]
+    return f"({first} et al., {year or 'n.d.'})" if len(authors) > 1 else f"({first}, {year or 'n.d.'})"
+
+
+def _citation_reference_text(
+    *,
+    authors: list[str],
+    year: int | None,
+    title: str,
+    venue: str,
+    doi_url: str,
+    landing_page_url: str,
+) -> str:
+    author_text = ", ".join(authors) if authors else "匿名"
+    parts = [f"{author_text}"]
+    parts.append(f"({year or 'n.d.'}).")
+    parts.append(title.strip() + ".")
+    if venue:
+        parts.append(venue.strip() + ".")
+    if doi_url:
+        parts.append(doi_url)
+    elif landing_page_url:
+        parts.append(landing_page_url)
+    return " ".join(part for part in parts if part).strip()
+
+
+def _format_openalex_work(item: dict[str, Any]) -> dict[str, Any]:
+    primary_location = item.get("primary_location") or {}
+    best_oa_location = item.get("best_oa_location") or {}
+    primary_source = primary_location.get("source") or {}
+    best_oa_source = best_oa_location.get("source") or {}
+    open_access = item.get("open_access") or {}
+    doi_url = _normalize_doi(item.get("doi"))
+    abstract = _truncate(_decode_openalex_abstract(item.get("abstract_inverted_index")), 1500)
+    landing_page_url = (
+        best_oa_location.get("landing_page_url")
+        or primary_location.get("landing_page_url")
+        or doi_url
+        or item.get("id", "")
+    )
+    pdf_url = best_oa_location.get("pdf_url") or primary_location.get("pdf_url") or ""
+    venue = (
+        best_oa_source.get("display_name")
+        or primary_source.get("display_name")
+        or ""
+    )
+    authors = _authors_list(item.get("authorships"))
+    year = item.get("publication_year")
+    citation_short = _citation_short(authors, year if isinstance(year, int) else None)
+    reference_text = _citation_reference_text(
+        authors=authors,
+        year=year if isinstance(year, int) else None,
+        title=str(item.get("display_name", "")),
+        venue=venue,
+        doi_url=doi_url,
+        landing_page_url=landing_page_url,
+    )
+    return {
+        "title": item.get("display_name", ""),
+        "authors": _authors_string(item.get("authorships")),
+        "authors_list": authors,
+        "publication_year": year,
+        "publication_date": item.get("publication_date", ""),
+        "venue": venue,
+        "type": item.get("type", ""),
+        "cited_by_count": item.get("cited_by_count"),
+        "doi": doi_url,
+        "openalex_id": item.get("id", ""),
+        "is_open_access": bool(open_access.get("is_oa")),
+        "oa_status": open_access.get("oa_status", ""),
+        "landing_page_url": landing_page_url,
+        "pdf_url": pdf_url,
+        "abstract": abstract,
+        "inline_citation": citation_short,
+        "reference_text": reference_text,
+    }
+
+
+def _tokenize_paper_query(query: str) -> list[str]:
+    tokens = re.findall(r"[\w-]+", query.lower())
+    filtered = [tok for tok in tokens if len(tok) >= 3 and tok not in _PAPER_STOPWORDS]
+    return filtered or tokens[:8]
+
+
+def _paper_relevance_score(item: dict[str, Any], query: str, tokens: list[str]) -> float:
+    title = str(item.get("display_name", "")).lower()
+    abstract = _decode_openalex_abstract(item.get("abstract_inverted_index")).lower()
+    venue = str(((item.get("primary_location") or {}).get("source") or {}).get("display_name", "")).lower()
+    searchable = " ".join(part for part in [title, abstract, venue] if part)
+
+    score = 0.0
+    query_lower = query.lower().strip()
+    if query_lower and query_lower in title:
+        score += 10.0
+    elif query_lower and query_lower in searchable:
+        score += 4.0
+
+    phrases: list[str] = []
+    for size in (3, 2):
+        for idx in range(0, max(len(tokens) - size + 1, 0)):
+            phrase = " ".join(tokens[idx : idx + size]).strip()
+            if phrase:
+                phrases.append(phrase)
+    for phrase in phrases:
+        if phrase in title:
+            score += 4.0
+        elif phrase in abstract:
+            score += 2.0
+
+    for token in tokens:
+        if token in title:
+            score += 3.0
+        if token in abstract:
+            score += 1.5
+        if token in venue:
+            score += 0.5
+    return score
+
+
+def _rank_openalex_results(
+    raw_results: list[dict[str, Any]],
+    query: str,
+    *,
+    sort: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    current_year = datetime.now().year + 1
+    tokens = _tokenize_paper_query(query)
+    ranked: list[tuple[float, int, dict[str, Any]]] = []
+    fallback: list[tuple[float, int, dict[str, Any]]] = []
+    seen_keys: set[str] = set()
+
+    for item in raw_results:
+        year = item.get("publication_year")
+        if isinstance(year, int) and year > current_year:
+            continue
+        item_type = str(item.get("type", "")).lower()
+        formatted = _format_openalex_work(item)
+        dedupe_key = (formatted.get("title") or formatted.get("doi") or formatted.get("openalex_id") or "").strip().lower()
+        if dedupe_key and dedupe_key in seen_keys:
+            continue
+        if dedupe_key:
+            seen_keys.add(dedupe_key)
+        relevance = _paper_relevance_score(item, query, tokens)
+        citation_bonus = min(float(item.get("cited_by_count") or 0), 5000.0) / 5000.0
+        year_bonus = 0.0
+        if isinstance(year, int):
+            year_bonus = max(year - 2000, 0) / 100.0
+
+        if sort == "cited_by_count":
+            final_score = relevance * 3.0 + citation_bonus * 4.0 + year_bonus
+        elif sort == "publication_year":
+            final_score = relevance * 3.0 + year_bonus * 4.0 + citation_bonus
+        else:
+            final_score = relevance * 4.0 + citation_bonus + year_bonus
+
+        bucket = ranked if item_type in _PAPER_RESULT_TYPES else fallback
+        bucket.append((final_score, int(year or 0), formatted))
+
+    ranked.sort(key=lambda row: (row[0], row[1]), reverse=True)
+    fallback.sort(key=lambda row: (row[0], row[1]), reverse=True)
+    merged = [row[2] for row in ranked]
+    if len(merged) < limit:
+        merged.extend(row[2] for row in fallback[: limit - len(merged)])
+    return merged[:limit]
 
 
 # ── 统一结果格式 ─────────────────────────────────────────────
