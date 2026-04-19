@@ -36,7 +36,6 @@ const els = {
   agentStatusTitle: $("#agent-status-title"),
   agentStatusDetail: $("#agent-status-detail"),
   agentStatusTimer: $("#agent-status-timer"),
-  agentStatusClose: $("#agent-status-close"),
   replyCtx: $("#reply-ctx"),
   replyCtxText: $("#reply-ctx-text"),
   replyCtxClear: $("#reply-ctx-clear"),
@@ -62,14 +61,12 @@ const agentStatus = (() => {
   let level = "idle";
   let startTs = 0;
   let timerHandle = null;
-  let hidden = false;
   let lastActivity = 0;
   let baseDetail = "";
 
   function render() {
     if (!els.agentStatus) return;
     els.agentStatus.dataset.level = level;
-    els.agentStatus.classList.toggle("hidden", hidden && level === "idle");
   }
 
   function fmtElapsed(ms) {
@@ -130,14 +127,8 @@ const agentStatus = (() => {
   }
 
   function reset() {
-    hidden = false;
     set("idle", "就绪", "等待你的指令");
   }
-
-  els.agentStatusClose?.addEventListener("click", () => {
-    hidden = true;
-    render();
-  });
 
   render();
   return { set, reset, markActivity };

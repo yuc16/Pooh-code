@@ -483,15 +483,23 @@ input, textarea { font: inherit; color: inherit; }
 
 /* Agent status banner */
 .agent-status {
-  margin: 12px 48px 0;
-  padding: 10px 14px;
+  margin: 0 32px;
+  padding: 9px 0 6px;
   display: flex; align-items: center; gap: 12px;
-  border: 1px solid var(--rule);
-  border-radius: 12px;
-  background: var(--bg-raised);
-  transition: opacity .2s, transform .2s;
+  position: relative;
+  background:
+    linear-gradient(180deg, oklch(0.983 0.01 84), oklch(0.968 0.014 79));
+  transition: background .2s, border-color .2s;
 }
-.agent-status.hidden { display: none !important; }
+.agent-status::after {
+  content: "";
+  position: absolute;
+  left: -32px;
+  right: -32px;
+  bottom: 0;
+  height: 1px;
+  background: var(--rule);
+}
 .agent-status-indicator {
   width: 24px; height: 24px;
   flex: 0 0 auto;
@@ -515,12 +523,39 @@ input, textarea { font: inherit; color: inherit; }
   background: var(--err);
   box-shadow: 0 0 0 3px oklch(from var(--err) l c h / 0.22);
 }
+.agent-status[data-level="busy"],
+.agent-status[data-level="streaming"],
+.agent-status[data-level="thinking"],
+.agent-status[data-level="tool"] {
+  background:
+    linear-gradient(180deg, oklch(0.978 0.015 84), oklch(0.96 0.022 74));
+}
+.agent-status[data-level="error"] {
+  background:
+    linear-gradient(180deg, oklch(from var(--err) 0.985 0.015 h), oklch(from var(--err) 0.965 0.02 h));
+}
+.agent-status[data-level="busy"]::after,
+.agent-status[data-level="streaming"]::after,
+.agent-status[data-level="thinking"]::after,
+.agent-status[data-level="tool"]::after {
+  background: oklch(from var(--accent) l c h / 0.18);
+}
+.agent-status[data-level="error"]::after {
+  background: oklch(from var(--err) l c h / 0.18);
+}
 .agent-status-body { flex: 1; min-width: 0; }
 .agent-status-title {
-  font-size: 13px; font-weight: 500; color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink);
+  line-height: 1.1;
 }
 .agent-status-detail {
-  font-size: 12px; color: var(--ink-3); margin-top: 2px;
+  font-family: var(--font-serif);
+  font-size: 12.5px;
+  color: var(--ink-3);
+  margin-top: 2px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .agent-status-meta {
@@ -528,17 +563,10 @@ input, textarea { font: inherit; color: inherit; }
   flex: 0 0 auto;
 }
 .agent-status-timer {
-  font-family: var(--font-mono); font-size: 11px;
+  font-family: var(--font-serif);
+  font-size: 12.5px;
   color: var(--ink-4);
 }
-.agent-status-close {
-  width: 22px; height: 22px;
-  display: grid; place-items: center;
-  color: var(--ink-4);
-  border-radius: 6px;
-  font-size: 16px; line-height: 1;
-}
-.agent-status-close:hover { background: var(--bg-sunken); color: var(--ink); }
 
 .chat-scroll {
   flex: 1; overflow-y: auto;
