@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>月光小农场</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=ZCOOL+XiaoWei&family=Noto+Sans+SC:wght@400;500;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <aside class="side-panel brand-panel">
+        <div class="badge">Moonlight Farm Sim</div>
+        <h1>月光小农场</h1>
+        <p class="lead">
+          在会发光的夜色田野里播种、浇水、收获，用作物换金币，解锁新的季节与更高效的农具。
+        </p>
+
+        <section class="stats-card highlight-card">
+          <div>
+            <span>金币</span>
+            <strong id="coins">0</strong>
+          </div>
+          <div>
+            <span>能量</span>
+            <strong id="energy">0</strong>
+          </div>
+          <div>
+            <span>天数</span>
+            <strong id="day">1</strong>
+          </div>
+          <div>
+            <span>天气</span>
+            <strong id="weather">晴朗</strong>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-title">
+            <h2>种子袋</h2>
+            <span>选择后点击土地播种</span>
+          </div>
+          <div id="seedList" class="seed-list"></div>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-title">
+            <h2>仓库</h2>
+            <span>收获后自动入库</span>
+          </div>
+          <div id="inventory" class="inventory-list"></div>
+        </section>
+      </aside>
+
+      <main class="main-stage">
+        <header class="hero-bar">
+          <div>
+            <p class="eyebrow">夜光庄园 · 养成经营</p>
+            <h2>让每一块田在星光下长成金子</h2>
+          </div>
+          <div class="toolbar">
+            <button id="waterAllBtn" class="ghost-btn">全田浇水</button>
+            <button id="sleepBtn" class="primary-btn">睡到下一天</button>
+          </div>
+        </header>
+
+        <section class="farm-stage">
+          <div class="season-ribbon">
+            <span>当前季节</span>
+            <strong id="season">春</strong>
+          </div>
+          <div id="farmGrid" class="farm-grid" aria-label="农田网格"></div>
+        </section>
+
+        <section class="bottom-grid">
+          <div class="side-panel market-panel">
+            <div class="section-title">
+              <h2>月集商店</h2>
+              <span>买种子、升级体力与自动收益</span>
+            </div>
+            <div id="shopList" class="shop-list"></div>
+          </div>
+
+          <div class="side-panel log-panel">
+            <div class="section-title">
+              <h2>庄园日志</h2>
+              <span>记录最近的经营变化</span>
+            </div>
+            <div id="logList" class="log-list"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <template id="plotTemplate">
+      <button class="plot" type="button">
+        <span class="plot-weather"></span>
+        <span class="plot-name">空地</span>
+        <span class="plot-meta">可播种</span>
+        <span class="plot-progress"><i></i></span>
+      </button>
+    </template>
+
+    <script src="./script.js"></script>
+  </body>
+</html>
