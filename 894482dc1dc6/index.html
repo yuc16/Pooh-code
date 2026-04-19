@@ -7,72 +7,138 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="app">
-      <header class="topbar card">
-        <div>
-          <p class="eyebrow">前端农场养成游戏</p>
-          <h1>田园小农场</h1>
-          <p class="subtitle">种植、收获、扩建，把你的农场经营起来。</p>
+    <div class="sky-decor sky-decor--left"></div>
+    <div class="sky-decor sky-decor--right"></div>
+
+    <section id="startScreen" class="start-screen">
+      <div class="start-screen__backdrop"></div>
+      <div class="start-card">
+        <div class="start-card__art" aria-hidden="true">
+          <div class="sun"></div>
+          <div class="cloud cloud--one"></div>
+          <div class="cloud cloud--two"></div>
+          <div class="hill hill--back"></div>
+          <div class="hill hill--front"></div>
+          <div class="barn">
+            <span class="barn-roof"></span>
+            <span class="barn-door"></span>
+          </div>
+          <div class="tree tree--left"></div>
+          <div class="tree tree--right"></div>
         </div>
-        <button id="resetBtn" class="ghost-btn">重置进度</button>
-      </header>
+        <div class="start-card__content">
+          <p class="eyebrow">Farm Simulation Game</p>
+          <h1>田园小农场</h1>
+          <p class="subtitle start-subtitle">
+            在柔和的晨光里经营自己的农场：播种、催熟、收获、扩建，慢慢把一块小田地养成热闹庄园。
+          </p>
 
-      <main class="layout">
-        <section class="panel card status-panel">
-          <h2>农场状态</h2>
-          <div class="stats-grid">
-            <div class="stat"><span>金币</span><strong id="goldStat">0</strong></div>
-            <div class="stat"><span>等级</span><strong id="levelStat">1</strong></div>
-            <div class="stat"><span>经验</span><strong id="expStat">0 / 100</strong></div>
-            <div class="stat"><span>空地</span><strong id="plotStat">0</strong></div>
+          <div class="start-features">
+            <div class="feature-chip">🌱 轻度养成</div>
+            <div class="feature-chip">🎨 清新插画风</div>
+            <div class="feature-chip">💾 自动本地存档</div>
           </div>
-          <div class="progress-wrap">
-            <div class="progress-bar"><div id="expBar" class="progress-fill"></div></div>
-          </div>
-        </section>
 
-        <section class="panel card market-panel">
-          <div class="panel-header">
-            <h2>种子商店</h2>
-            <p>选择一种作物，然后点击土地种下它。</p>
+          <div class="start-actions">
+            <button id="startBtn" class="hero-btn">开始经营</button>
+            <button id="continueBtn" class="ghost-btn start-ghost-btn">继续上次进度</button>
           </div>
-          <div id="seedList" class="seed-list"></div>
-        </section>
 
-        <section class="panel card farm-panel">
-          <div class="panel-header">
-            <h2>农田</h2>
-            <p>成熟后点击收获；未成熟时可花费少量金币催熟。</p>
+          <div class="start-tips">
+            <span>初始资源：120 金币 / 3 块土地</span>
+            <span>推荐：先种胡萝卜快速升级</span>
           </div>
-          <div id="farmGrid" class="farm-grid"></div>
-        </section>
+        </div>
+      </div>
+    </section>
 
-        <section class="panel card actions-panel">
-          <h2>经营操作</h2>
-          <div class="action-list">
-            <button id="buyPlotBtn" class="primary-btn">扩建一块土地（50 金币）</button>
-            <button id="speedUpBtn" class="secondary-btn">全田催熟一次（20 金币）</button>
-            <button id="collectAllBtn" class="secondary-btn">一键收获成熟作物</button>
+    <div class="app-shell">
+      <div class="app">
+        <header class="topbar card hero-topbar">
+          <div class="hero-copy">
+            <p class="eyebrow">前端农场养成游戏</p>
+            <h1>田园小农场</h1>
+            <p class="subtitle">种植、收获、扩建，把你的农场经营起来。</p>
+            <div class="hero-badges">
+              <span class="hero-badge">今日天气 · 晴朗</span>
+              <span class="hero-badge">适合播种</span>
+            </div>
           </div>
-          <div class="tips">
-            <p>玩法说明：</p>
-            <ul>
-              <li>初始有 3 块土地和 120 金币。</li>
-              <li>不同作物成熟时间和收益不同。</li>
-              <li>升级后会解锁更高价值作物。</li>
-              <li>进度会自动保存在浏览器本地。</li>
-            </ul>
+          <div class="hero-preview" aria-hidden="true">
+            <div class="preview-sun"></div>
+            <div class="preview-cloud"></div>
+            <div class="preview-house"></div>
+            <div class="preview-ground"></div>
+            <div class="preview-sprout preview-sprout--one"></div>
+            <div class="preview-sprout preview-sprout--two"></div>
           </div>
-        </section>
+          <button id="resetBtn" class="ghost-btn">重置进度</button>
+        </header>
 
-        <section class="panel card log-panel">
-          <div class="panel-header">
-            <h2>农场日志</h2>
-            <p>最近 8 条操作记录</p>
-          </div>
-          <ul id="logList" class="log-list"></ul>
-        </section>
-      </main>
+        <main class="layout">
+          <section class="panel card status-panel">
+            <div class="panel-header panel-header--tight">
+              <div>
+                <h2>农场状态</h2>
+                <p>持续收获来升级并解锁高收益作物。</p>
+              </div>
+              <div class="status-mark">经营中</div>
+            </div>
+            <div class="stats-grid">
+              <div class="stat stat-gold"><span>金币</span><strong id="goldStat">0</strong></div>
+              <div class="stat"><span>等级</span><strong id="levelStat">1</strong></div>
+              <div class="stat"><span>经验</span><strong id="expStat">0 / 100</strong></div>
+              <div class="stat"><span>空地</span><strong id="plotStat">0</strong></div>
+            </div>
+            <div class="progress-wrap">
+              <div class="progress-label"><span>成长进度</span><span id="progressText">继续努力</span></div>
+              <div class="progress-bar"><div id="expBar" class="progress-fill"></div></div>
+            </div>
+          </section>
+
+          <section class="panel card market-panel">
+            <div class="panel-header">
+              <h2>种子商店</h2>
+              <p>选择一种作物，然后点击土地种下它。</p>
+            </div>
+            <div id="seedList" class="seed-list"></div>
+          </section>
+
+          <section class="panel card farm-panel">
+            <div class="panel-header">
+              <h2>农田</h2>
+              <p>成熟后点击收获；未成熟时可花费少量金币催熟。</p>
+            </div>
+            <div id="farmGrid" class="farm-grid"></div>
+          </section>
+
+          <section class="panel card actions-panel">
+            <h2>经营操作</h2>
+            <div class="action-list">
+              <button id="buyPlotBtn" class="primary-btn">扩建一块土地（50 金币起）</button>
+              <button id="speedUpBtn" class="secondary-btn">全田催熟一次（20 金币）</button>
+              <button id="collectAllBtn" class="secondary-btn">一键收获成熟作物</button>
+            </div>
+            <div class="tips tips-card">
+              <p>玩法说明：</p>
+              <ul>
+                <li>初始有 3 块土地和 120 金币。</li>
+                <li>不同作物成熟时间和收益不同。</li>
+                <li>升级后会解锁更高价值作物。</li>
+                <li>进度会自动保存在浏览器本地。</li>
+              </ul>
+            </div>
+          </section>
+
+          <section class="panel card log-panel">
+            <div class="panel-header">
+              <h2>农场日志</h2>
+              <p>最近 8 条操作记录</p>
+            </div>
+            <ul id="logList" class="log-list"></ul>
+          </section>
+        </main>
+      </div>
     </div>
 
     <template id="seedCardTemplate">

@@ -11,6 +11,7 @@ const DEFAULT_STATE = {
   gold: 120,
   level: 1,
   exp: 0,
+  hasStarted: false,
   plots: Array.from({ length: 3 }, (_, index) => ({ id: index + 1, cropId: null, plantedAt: null })),
   selectedCropId: 'carrot',
   logs: ['欢迎来到田园小农场，先选种子再点土地开始种植。']
@@ -22,6 +23,7 @@ const elements = {
   expStat: document.querySelector('#expStat'),
   plotStat: document.querySelector('#plotStat'),
   expBar: document.querySelector('#expBar'),
+  progressText: document.querySelector('#progressText'),
   seedList: document.querySelector('#seedList'),
   farmGrid: document.querySelector('#farmGrid'),
   logList: document.querySelector('#logList'),
@@ -29,6 +31,9 @@ const elements = {
   speedUpBtn: document.querySelector('#speedUpBtn'),
   collectAllBtn: document.querySelector('#collectAllBtn'),
   resetBtn: document.querySelector('#resetBtn'),
+  startBtn: document.querySelector('#startBtn'),
+  continueBtn: document.querySelector('#continueBtn'),
+  startScreen: document.querySelector('#startScreen'),
   seedCardTemplate: document.querySelector('#seedCardTemplate')
 };
 
@@ -103,12 +108,55 @@ function formatDuration(seconds) {
   return `${minutes} 分钟后成熟`;
 }
 
+function getProgressLabel() {
+  if (state.level >= 4) return '丰收农场主';
+  if (state.level === 3) return '经营节奏稳定';
+  if (state.level === 2) return '开始步入正轨';
+  return '新手农夫上路中';
+}
+
+function updateStartScreen() {
+  const hasSave = Boolean(localStorage.getItem(STORAGE_KEY));
+  elements.continueBtn.style.display = hasSave ? 'inline-flex' : 'none';
+  if (state.hasStarted) {
+    elements.startScreen.classList.add('is-hidden');
+  } else {
+    elements.startScreen.classList.remove('is-hidden');
+  }
+}
+
+function hideStartScreen() {
+  state.hasStarted = true;
+  saveState();
+  updateStartScreen();
+}
+
+function startNewGame() {
+  const hasSave = Boolean(localStorage.getItem(STORAGE_KEY));
+  if (hasSave && state.hasStarted) {
+    const confirmed = window.confirm('开始新游戏会覆盖当前本地进度，确定继续吗？');
+    if (!confirmed) return;
+  }
+  state = structuredClone(DEFAULT_STATE);
+  state.hasStarted = true;
+  addLog('新的农场经营开始了。');
+  update();
+  updateStartScreen();
+}
+
+function continueGame() {
+  state.hasStarted = true;
+  saveState();
+  updateStartScreen();
+}
+
 function renderStats() {
   elements.goldStat.textContent = String(state.gold);
   elements.levelStat.textContent = String(state.level);
   elements.expStat.textContent = `${state.exp} / ${getExpTarget()}`;
   elements.plotStat.textContent = `${state.plots.length} 块`;
   elements.expBar.style.width = `${(state.exp / getExpTarget()) * 100}%`;
+  elements.progressText.textContent = getProgressLabel();
 }
 
 function renderSeeds() {
@@ -320,6 +368,7 @@ function resetGame() {
   state = structuredClone(DEFAULT_STATE);
   saveState();
   update();
+  updateStartScreen();
 }
 
 function update() {
@@ -334,6 +383,9 @@ elements.buyPlotBtn.addEventListener('click', buyPlot);
 elements.speedUpBtn.addEventListener('click', speedUpAll);
 elements.collectAllBtn.addEventListener('click', collectAll);
 elements.resetBtn.addEventListener('click', resetGame);
+elements.startBtn.addEventListener('click', startNewGame);
+elements.continueBtn.addEventListener('click', continueGame);
 
 update();
+updateStartScreen();
 setInterval(renderFarm, 1000);
