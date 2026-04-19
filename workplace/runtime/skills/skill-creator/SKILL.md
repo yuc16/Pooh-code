@@ -9,6 +9,8 @@ description: 创建或更新本项目 agent 的 skill。当用户提到"新增 s
 
 只做一件事：在 `workplace/runtime/skills/` 下创建或更新可被当前项目 agent 自动发现的 skill。
 
+如果任务对象是“外部/第三方 skill 导入到当前项目”，不要直接按本文创建或覆盖；应使用 `skill-install-review`。
+
 ## 本项目里的事实
 
 - skill 的发现目录是 `workplace/runtime/skills/`
@@ -21,8 +23,8 @@ description: 创建或更新本项目 agent 的 skill。当用户提到"新增 s
 除非用户明确要求，否则：
 
 1. 把 skill 创建在 `workplace/runtime/skills/<skill-name>/`
-2. 先只创建 `SKILL.md`
-3. 只有当任务确实需要时，再额外增加 `scripts/`、`references/`、`assets/`
+2. 先创建 `SKILL.md`
+3. 当任务确实需要时，再额外增加 `scripts/`、`references/`、`assets/`
 4. 不要创建 README、CHANGELOG、安装说明之类的多余文件
 
 ## 命名规则
@@ -64,7 +66,7 @@ workplace/runtime/skills/<skill-name>/
 └── SKILL.md
 ```
 
-只有确实需要时再扩展：
+当确实需要时再扩展：
 
 ```text
 workplace/runtime/skills/<skill-name>/
