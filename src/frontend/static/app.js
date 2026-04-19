@@ -1581,6 +1581,7 @@ function _humanSize(bytes) {
 async function streamChat(text, files = []) {
   const launchedSessionId = state.sessionId;
   const bubble = createAssistantBubble();
+  bubble._sawInjected = false;
   state.liveBubbles.set(launchedSessionId, bubble);
   els.chatInner.appendChild(bubble.root);
   els.messages.scrollTop = els.messages.scrollHeight;
@@ -1715,6 +1716,7 @@ async function streamChat(text, files = []) {
         break;
       case "injected":
         if (canRenderStream()) {
+          bubble._sawInjected = true;
           removeCursor(bubble);
           _endOtherBlocks(bubble, null);
           const injDiv = document.createElement("div");
@@ -1783,6 +1785,9 @@ async function streamChat(text, files = []) {
       agentStatus.set("idle", "连接已结束", "流式响应提前终止，已显示已接收的内容");
     }
     state.liveBubbles.delete(launchedSessionId);
+    if (bubble._sawInjected && state.sessionId === launchedSessionId) {
+      await refreshMessages();
+    }
   }
 }
 

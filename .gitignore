@@ -22,3 +22,7 @@ workplace/runtime/skills/byd-patent-claim-chart-internal/secrets.local.json
 # Web 端鉴权 SQLite（绝对不提交）
 private/
 private/*
+
+
+# 缓存
+workplace/runtime/.uv-cache
