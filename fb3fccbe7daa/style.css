@@ -1,0 +1,196 @@
+:root {
+  --bg: #f6f1dd;
+  --panel: #fffaf0;
+  --green: #5d8c45;
+  --green-dark: #3f6630;
+  --soil: #8f6238;
+  --soil-light: #b9875a;
+  --text: #2f2a22;
+  --muted: #756b5d;
+  --accent: #f0b34d;
+  --danger: #c96442;
+  --shadow: 0 12px 28px rgba(64, 47, 24, 0.12);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--text);
+  background: linear-gradient(180deg, #d8f0ff 0%, #f7efd8 24%, var(--bg) 100%);
+}
+button {
+  font: inherit;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  background: var(--green);
+  color: #fff;
+  padding: 10px 14px;
+  transition: transform .15s ease, opacity .15s ease, background .15s ease;
+}
+button:hover { transform: translateY(-1px); }
+button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+button.ghost { background: #e9dfc4; color: var(--text); }
+
+.page {
+  max-width: 1380px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+.topbar h1 { margin: 0 0 8px; font-size: 32px; }
+.topbar p { margin: 0; color: var(--muted); }
+
+.layout {
+  display: grid;
+  grid-template-columns: 300px 1fr 320px;
+  gap: 18px;
+}
+.panel {
+  background: rgba(255, 250, 240, 0.95);
+  border: 1px solid rgba(120, 93, 58, 0.12);
+  border-radius: 20px;
+  padding: 18px;
+  box-shadow: var(--shadow);
+}
+.panel h2 { margin: 0 0 14px; font-size: 22px; }
+.section-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.field-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.stat {
+  background: #f4ecd8;
+  border-radius: 14px;
+  padding: 12px;
+}
+.stat span {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.stat strong { font-size: 22px; }
+.exp-bar {
+  margin: 14px 0;
+  height: 12px;
+  background: #eadfbe;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.exp-bar > div {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, #82c65d, #f0b34d);
+}
+.tips {
+  min-height: 72px;
+  line-height: 1.6;
+  color: var(--muted);
+  background: #f8f1df;
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.farm-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 14px;
+}
+.plot {
+  aspect-ratio: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px;
+  background: linear-gradient(180deg, var(--soil-light), var(--soil));
+  box-shadow: inset 0 2px 6px rgba(255,255,255,.18);
+}
+.plot.locked {
+  background: linear-gradient(180deg, #c9c2b6, #9d9486);
+}
+.plot.growing { background: linear-gradient(180deg, #6aa84f, #4f7f3a); }
+.plot.ready { background: linear-gradient(180deg, #f6c75f, #df9b39); }
+.plot-name { font-size: 18px; font-weight: 700; }
+.plot-status, .plot-timer { font-size: 13px; opacity: .95; }
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.tab {
+  background: #ede2c7;
+  color: var(--text);
+}
+.tab.active {
+  background: var(--green);
+  color: #fff;
+}
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+.card-list {
+  display: grid;
+  gap: 10px;
+}
+.card {
+  background: #f6efd9;
+  border-radius: 14px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.card h3 { margin: 0; font-size: 17px; }
+.card p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.card-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+.badge {
+  display: inline-block;
+  background: #e4d8b6;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+.inventory-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f6efd9;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 1100px) {
+  .layout { grid-template-columns: 1fr; }
+}
+@media (max-width: 720px) {
+  .page { padding: 14px; }
+  .topbar { flex-direction: column; }
+  .farm-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+}

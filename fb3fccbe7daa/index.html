@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>田园物语：农场养成</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div>
+        <h1>田园物语：农场养成</h1>
+        <p>种地、收菜、扩地、升级工具，慢慢把小农场经营起来。</p>
+      </div>
+      <button id="saveBtn" class="ghost">立即保存</button>
+    </header>
+
+    <main class="layout">
+      <aside class="panel stats-panel">
+        <h2>农场状态</h2>
+        <div class="stats-grid">
+          <div class="stat"><span>金币</span><strong id="gold">0</strong></div>
+          <div class="stat"><span>等级</span><strong id="level">1</strong></div>
+          <div class="stat"><span>经验</span><strong id="exp">0 / 100</strong></div>
+          <div class="stat"><span>体力</span><strong id="energy">0 / 0</strong></div>
+          <div class="stat"><span>仓库</span><strong id="storage">0 / 40</strong></div>
+          <div class="stat"><span>天气</span><strong id="weather">晴天</strong></div>
+        </div>
+        <div class="exp-bar"><div id="expBar"></div></div>
+        <div class="tips" id="tips"></div>
+      </aside>
+
+      <section class="panel field-panel">
+        <div class="section-title">
+          <h2>农田</h2>
+          <div class="field-actions">
+            <button id="unlockPlotBtn">解锁地块（150 金币）</button>
+            <button id="restBtn" class="ghost">休息恢复体力</button>
+          </div>
+        </div>
+        <div id="farmGrid" class="farm-grid"></div>
+      </section>
+
+      <aside class="panel shop-panel">
+        <h2>商店与仓库</h2>
+        <div class="tabs">
+          <button class="tab active" data-tab="seeds">种子商店</button>
+          <button class="tab" data-tab="upgrades">升级</button>
+          <button class="tab" data-tab="bag">仓库</button>
+        </div>
+        <div id="tab-seeds" class="tab-content active"></div>
+        <div id="tab-upgrades" class="tab-content"></div>
+        <div id="tab-bag" class="tab-content"></div>
+      </aside>
+    </main>
+  </div>
+
+  <template id="plotTemplate">
+    <button class="plot">
+      <span class="plot-name"></span>
+      <span class="plot-status"></span>
+      <span class="plot-timer"></span>
+    </button>
+  </template>
+
+  <script src="./script.js"></script>
+</body>
+</html>
