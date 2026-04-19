@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from duckduckgo_search import DDGS
 
 from .models import ToolSpec
-from .paths import WORKPLACE_DIR
+from .paths import CACHE_DIR, WORKPLACE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +227,11 @@ def _tool_env() -> dict[str, str]:
         if uv_dir not in path_entries:
             path_entries.insert(0, uv_dir)
     env["PATH"] = os.pathsep.join(path_entries)
+    # Force uv to use a project-local writable cache instead of ~/.cache/uv,
+    # which is blocked in the agent sandbox and may not exist on servers.
+    uv_cache_dir = CACHE_DIR / "uv"
+    uv_cache_dir.mkdir(parents=True, exist_ok=True)
+    env["UV_CACHE_DIR"] = str(uv_cache_dir)
     return env
 
 
