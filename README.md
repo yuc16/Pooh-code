@@ -246,7 +246,7 @@ Web 端走「邮箱 + 密码」账号体系，每个用户自己的 `session_key
 - **暖调米白书卷气主题**（Newsreader 衬线 + Geist 无衬线 + JetBrains Mono 等宽 + 琥珀 accent），基于 oklch 色彩空间的低饱和度米白纸张配色，不再提供深色主题切换
 - **三栏布局**：左侧会话栏（2fr）/ 中间聊天区（7fr）/ 右侧 Minimap（1fr）；两条 `col-divider` 分隔条可鼠标拖拽调整三栏比例，结果持久化到 `localStorage.pooh.cols.v1`
 - 左侧栏：顶部是品牌 logo + 刷新按钮 + 搜索框（⌘K 聚焦）+ "新建会话"按钮（⌘N 新建）、会话列表（`.convo` 行）、底部用户卡片（头像 + 邮箱 + 退出按钮）
-- 首页左上角、登录页品牌区、浏览器页签 favicon 与 touch icon 现在统一使用 [src/frontend/static/logo.jpg](/Users/wangyc/Desktop/projects/Pooh-code/src/frontend/static/logo.jpg)；首页和登录页左上角 logo 不再带边框、底色或阴影方框，直接贴合页面背景显示，并带版本参数以避免浏览器长期缓存旧图
+- 首页左上角和登录页品牌区继续使用 [src/frontend/static/logo.jpg](/Users/wangyc/Desktop/projects/Pooh-code/src/frontend/static/logo.jpg)；浏览器页签 favicon 与 touch icon 单独使用按新构图裁好的 [src/frontend/static/favicon-pooh.png](/Users/wangyc/Desktop/projects/Pooh-code/src/frontend/static/favicon-pooh.png)，避免直接拿页面 logo 缩小后在页签里变形或显得发丑；首页和登录页左上角 logo 不再带边框、底色或阴影方框，并统一带版本参数以尽量绕开浏览器 favicon 缓存
 - 每个会话条目 `.convo`：**紧凑单行**布局——标题 + 时间（右对齐贴到 token 进度条右缘）同一行，下方一条 token 进度条（来自 `list_sessions` 返回的 `usage` 字段，≥75% 转为红色警示），**不再显示"N 产物"徽标**以减少视觉噪音；**点击标题可展开内嵌的产物列表**（来自 `/api/files` 对应 `session_id` 分组，每条可直接点击下载），再次点击切换收起
 - 会话列表按日期分组（今天 / 昨天 / N 天前 / 年月），只显示 web channel 下的会话（不混入 cli / feishu）；搜索框可按标题或 `session_id` 实时过滤
 - **双击标题**可直接重命名（Enter 确认，Escape 取消），修改后写入 `sessions.json`
