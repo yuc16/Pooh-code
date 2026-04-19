@@ -1502,13 +1502,14 @@ function addToolBlock(bubble, { call_id, name }) {
     <div class="tool-head">
       <span class="badge">TOOL</span>
       <span class="tool-name"></span>
-      <span class="tool-status">调用中…</span>
+      <span class="tool-status">构造参数中…</span>
     </div>
     <div class="tool-body">
       <div class="tool-label">INPUT</div>
       <pre class="tool-input">（等待参数…）</pre>
     </div>
   `;
+  wrap._inputRaw = "";
   wrap.querySelector(".tool-name").textContent = name || "tool";
   group.querySelector(".thinking-body").appendChild(wrap);
   bubble.toolBlocks[call_id] = wrap;
@@ -1516,10 +1517,24 @@ function addToolBlock(bubble, { call_id, name }) {
   return wrap;
 }
 
+function appendToolInputDelta(bubble, { call_id, name, delta, arguments: rawArguments }) {
+  let wrap = bubble.toolBlocks[call_id];
+  if (!wrap) wrap = addToolBlock(bubble, { call_id, name });
+  wrap.querySelector(".tool-name").textContent = name || "tool";
+  wrap._inputRaw = typeof rawArguments === "string"
+    ? rawArguments
+    : `${wrap._inputRaw || ""}${delta || ""}`;
+  const toolInput = wrap.querySelector(".tool-input");
+  toolInput.textContent = wrap._inputRaw || "（等待参数…）";
+  wrap.querySelector(".tool-status").textContent = "构造参数中…";
+  autoScrollIfNear();
+}
+
 function finalizeToolInput(bubble, { call_id, id, name, input }) {
   let wrap = bubble.toolBlocks[call_id];
   if (!wrap) wrap = addToolBlock(bubble, { call_id, name });
   wrap.querySelector(".tool-name").textContent = name || "tool";
+  wrap._inputRaw = JSON.stringify(input || {}, null, 2);
   wrap.querySelector(".tool-input").textContent = JSON.stringify(input || {}, null, 2);
   wrap.querySelector(".tool-status").textContent = "执行中…";
   if (id) bubble.toolBlocks[id] = wrap;
@@ -1635,6 +1650,12 @@ async function streamChat(text, files = []) {
         if (canRenderStream()) {
           addToolBlock(bubble, { call_id: evt.call_id, name: evt.name });
           agentStatus.set("tool", `调用工具: ${evt.name || "unknown"}`, "模型正在构造工具调用参数…");
+        }
+        break;
+      case "tool_use_delta":
+        if (canRenderStream()) {
+          appendToolInputDelta(bubble, evt);
+          agentStatus.set("tool", `调用工具: ${evt.name || "unknown"}`, "模型正在逐步生成工具参数…");
         }
         break;
       case "tool_use_done":

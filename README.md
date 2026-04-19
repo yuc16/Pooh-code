@@ -298,6 +298,7 @@ Web 端走「邮箱 + 密码」账号体系，每个用户自己的 `session_key
 | --- | --- |
 | `text_delta` | 助手正文的 token 级增量，前端按字符追加，尾部带闪烁光标 |
 | `tool_use_started` | 模型开始调用工具，前端立即插入一张 tool-block 卡片（徽章 `TOOL`、工具名、状态 `调用中…`） |
+| `tool_use_delta` | 工具参数的增量 token；前端会把 `INPUT` 区从“等待参数…”改成边生成边显示的原始 JSON 片段，减少长时间空等 |
 | `tool_use_done` | 工具参数就绪，卡片里填充 `INPUT` JSON，状态切到 `执行中…` |
 | `tool_result` | 本地 `ToolRegistry.execute` 跑完，卡片里追加 `OUTPUT`，状态切到 `完成`；如果是错误输出会变红色并显示 `ERROR` + `失败` |
 | `turn_start` | 多轮 tool_use 时在两轮之间插入一条灰色 `· turn N ·` 分隔线 |

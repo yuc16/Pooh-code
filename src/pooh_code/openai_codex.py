@@ -362,7 +362,18 @@ def _consume_sse(
         elif event_type == "response.function_call_arguments.delta":
             call_id = event.get("call_id")
             if call_id and call_id in tool_call_buffers:
-                tool_call_buffers[call_id]["arguments"] += event.get("delta") or ""
+                delta = event.get("delta") or ""
+                tool_call_buffers[call_id]["arguments"] += delta
+                if delta:
+                    _emit(
+                        "tool_use_delta",
+                        {
+                            "call_id": call_id,
+                            "name": tool_call_buffers[call_id].get("name") or "",
+                            "delta": delta,
+                            "arguments": tool_call_buffers[call_id]["arguments"],
+                        },
+                    )
         elif event_type == "response.function_call_arguments.done":
             call_id = event.get("call_id")
             if call_id and call_id in tool_call_buffers:
