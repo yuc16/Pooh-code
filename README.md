@@ -309,7 +309,7 @@ Web 端走「邮箱 + 密码」账号体系，每个用户自己的 `session_key
 | `state` | 最后一帧带上新的 `session_id` / `usage`，用来同步右上角 |
 | `error` | 任意异常，前端置错误状态并写系统气泡 |
 
-tool-block 卡片的 `INPUT` / `OUTPUT` 都是可折叠的代码块，点击卡片头即可收起，方便长工具输出不挤占视线。
+tool-block 卡片的 `INPUT` / `OUTPUT` 都是可折叠的代码块，点击卡片头即可收起，方便长工具输出不挤占视线。如果上游没有发参数增量（例如某些 `write_file` 调用），前端会先按工具 `input_schema` 渲染一个参数骨架，避免长时间整块空白。
 
 SSE 连接使用 `Connection: close` 并在服务端强制 `self.close_connection = True`，前端在收到 `done` 后主动 `reader.cancel()`，避免 reader 挂住导致输入框卡死。
 

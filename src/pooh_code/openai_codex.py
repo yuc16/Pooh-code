@@ -316,6 +316,17 @@ def _consume_sse(
         except Exception:
             pass
 
+    def _resolve_tool_call_key(event: dict[str, Any]) -> str | None:
+        call_id = event.get("call_id")
+        if call_id and call_id in tool_call_buffers:
+            return call_id
+        item_id = event.get("item_id")
+        if item_id:
+            for key, buf in tool_call_buffers.items():
+                if buf.get("id") == item_id:
+                    return key
+        return None
+
     for event in _iter_sse(response, cancel_event=cancel_event):
         if cancel_event is not None and cancel_event.is_set():
             raise RuntimeError("OpenAI Codex response cancelled.")
@@ -360,7 +371,7 @@ def _consume_sse(
         ):
             _emit("reasoning_part_done", {})
         elif event_type == "response.function_call_arguments.delta":
-            call_id = event.get("call_id")
+            call_id = _resolve_tool_call_key(event)
             if call_id and call_id in tool_call_buffers:
                 delta = event.get("delta") or ""
                 tool_call_buffers[call_id]["arguments"] += delta
@@ -375,7 +386,7 @@ def _consume_sse(
                         },
                     )
         elif event_type == "response.function_call_arguments.done":
-            call_id = event.get("call_id")
+            call_id = _resolve_tool_call_key(event)
             if call_id and call_id in tool_call_buffers:
                 tool_call_buffers[call_id]["arguments"] = event.get("arguments") or ""
         elif event_type == "response.output_item.done":

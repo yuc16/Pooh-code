@@ -592,6 +592,7 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                             spec.get("name", ""),
                             spec.get("description", ""),
                         ),
+                        "input_schema": spec.get("input_schema", {}),
                     }
                     for spec in tool_specs
                 ],

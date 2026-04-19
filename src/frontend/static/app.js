@@ -154,6 +154,7 @@ let state = {
   imageAspectRatio: "1:1",
   imageMode: false,
   imageGenerating: false,
+  toolSchemas: {},
 };
 
 const COLS_KEY = "pooh.cols.v1";
@@ -348,6 +349,11 @@ function applyState(payload) {
   }
   if (payload.capabilities) {
     state.capabilities = payload.capabilities;
+    state.toolSchemas = Object.fromEntries(
+      (payload.capabilities.tools || [])
+        .filter((tool) => tool && tool.name)
+        .map((tool) => [tool.name, tool.input_schema || {}]),
+    );
   }
   if (typeof payload.label === "string") {
     state.currentLabel = payload.label;
@@ -355,6 +361,43 @@ function applyState(payload) {
   refreshDisplayedModel();
   refreshChatTitle();
   updateRunningUI();
+}
+
+function _toolSchemaPlaceholder(schema) {
+  if (!schema || typeof schema !== "object") return "";
+  if (schema.type === "object") {
+    const props = schema.properties && typeof schema.properties === "object" ? schema.properties : {};
+    const out = {};
+    for (const [key, child] of Object.entries(props)) {
+      out[key] = _toolSchemaPlaceholderValue(child);
+    }
+    return JSON.stringify(out, null, 2);
+  }
+  return "";
+}
+
+function _toolSchemaPlaceholderValue(schema) {
+  if (!schema || typeof schema !== "object") return "…";
+  const t = schema.type;
+  if (Array.isArray(t)) return _toolSchemaPlaceholderValue({ ...schema, type: t[0] });
+  if (t === "object") {
+    const props = schema.properties && typeof schema.properties === "object" ? schema.properties : {};
+    const out = {};
+    for (const [key, child] of Object.entries(props)) {
+      out[key] = _toolSchemaPlaceholderValue(child);
+    }
+    return out;
+  }
+  if (t === "array") return [];
+  if (t === "number" || t === "integer") return 0;
+  if (t === "boolean") return false;
+  return "…";
+}
+
+function _toolInputPendingText(name) {
+  const schema = state.toolSchemas?.[name];
+  const skeleton = _toolSchemaPlaceholder(schema);
+  return skeleton || "（等待参数…）";
 }
 
 function escapeHtml(s) {
@@ -1506,11 +1549,12 @@ function addToolBlock(bubble, { call_id, name }) {
     </div>
     <div class="tool-body">
       <div class="tool-label">INPUT</div>
-      <pre class="tool-input">（等待参数…）</pre>
+      <pre class="tool-input"></pre>
     </div>
   `;
   wrap._inputRaw = "";
   wrap.querySelector(".tool-name").textContent = name || "tool";
+  wrap.querySelector(".tool-input").textContent = _toolInputPendingText(name || "tool");
   group.querySelector(".thinking-body").appendChild(wrap);
   bubble.toolBlocks[call_id] = wrap;
   autoScrollIfNear();
@@ -1525,7 +1569,7 @@ function appendToolInputDelta(bubble, { call_id, name, delta, arguments: rawArgu
     ? rawArguments
     : `${wrap._inputRaw || ""}${delta || ""}`;
   const toolInput = wrap.querySelector(".tool-input");
-  toolInput.textContent = wrap._inputRaw || "（等待参数…）";
+  toolInput.textContent = wrap._inputRaw || _toolInputPendingText(name || "tool");
   wrap.querySelector(".tool-status").textContent = "构造参数中…";
   autoScrollIfNear();
 }
