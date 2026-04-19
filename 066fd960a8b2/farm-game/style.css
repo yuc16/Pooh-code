@@ -1,17 +1,17 @@
 :root {
-  --bg: #0f1021;
-  --bg-soft: #191b35;
-  --panel: rgba(19, 20, 43, 0.82);
-  --panel-strong: rgba(31, 34, 76, 0.92);
-  --line: rgba(174, 196, 255, 0.2);
-  --text: #f7f1e9;
-  --muted: #b3b5d1;
-  --gold: #ffd36e;
-  --mint: #91f2ca;
-  --pink: #ff8fc7;
-  --violet: #8a7dff;
-  --danger: #ff8a8a;
-  --shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+  --bg: #f8f2e8;
+  --bg-soft: #fffaf4;
+  --panel: rgba(255, 250, 242, 0.88);
+  --panel-strong: rgba(255, 247, 236, 0.94);
+  --line: rgba(166, 132, 92, 0.18);
+  --text: #3a2b1d;
+  --muted: #8b725a;
+  --gold: #d9902b;
+  --mint: #72b97e;
+  --pink: #db8cb2;
+  --violet: #9886d6;
+  --danger: #d97d6d;
+  --shadow: 0 24px 60px rgba(135, 101, 64, 0.16);
 }
 
 * {
@@ -24,10 +24,10 @@ body {
   font-family: "Noto Sans SC", sans-serif;
   color: var(--text);
   background:
-    radial-gradient(circle at top left, rgba(139, 113, 255, 0.2), transparent 28%),
-    radial-gradient(circle at 80% 20%, rgba(255, 143, 199, 0.18), transparent 24%),
-    radial-gradient(circle at bottom center, rgba(113, 230, 176, 0.12), transparent 30%),
-    linear-gradient(180deg, #13142f 0%, #0d0e1e 100%);
+    radial-gradient(circle at top left, rgba(255, 220, 174, 0.65), transparent 28%),
+    radial-gradient(circle at 85% 18%, rgba(219, 140, 178, 0.2), transparent 22%),
+    radial-gradient(circle at bottom center, rgba(114, 185, 126, 0.18), transparent 30%),
+    linear-gradient(180deg, #fffaf2 0%, #f6ebdc 100%);
 }
 
 body::before {
@@ -36,11 +36,12 @@ body::before {
   inset: 0;
   pointer-events: none;
   background-image:
-    radial-gradient(circle, rgba(255,255,255,0.7) 1px, transparent 1px),
-    radial-gradient(circle, rgba(255,215,137,0.5) 1px, transparent 1px);
-  background-size: 120px 120px, 180px 180px;
-  background-position: 20px 40px, 70px 90px;
-  opacity: 0.22;
+    radial-gradient(circle, rgba(255,255,255,0.75) 1px, transparent 1px),
+    linear-gradient(rgba(166, 132, 92, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(166, 132, 92, 0.05) 1px, transparent 1px);
+  background-size: 140px 140px, 26px 26px, 26px 26px;
+  background-position: 0 0, 0 0, 0 0;
+  opacity: 0.65;
 }
 
 button {
@@ -99,7 +100,7 @@ h1 {
 .lead {
   margin: 0;
   line-height: 1.8;
-  color: #ddd7d0;
+  color: #6f5a46;
 }
 
 .stats-card {
@@ -111,14 +112,14 @@ h1 {
 .highlight-card {
   padding: 14px;
   border-radius: 22px;
-  background: linear-gradient(135deg, rgba(255, 211, 110, 0.14), rgba(145, 242, 202, 0.1));
-  border: 1px solid rgba(255, 211, 110, 0.18);
+  background: linear-gradient(135deg, rgba(255, 214, 155, 0.52), rgba(188, 235, 190, 0.34));
+  border: 1px solid rgba(217, 144, 43, 0.18);
 }
 
 .stats-card div {
   padding: 12px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.52);
 }
 
 .stats-card strong {
@@ -154,7 +155,7 @@ h1 {
 .log-item {
   border-radius: 18px;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.56);
 }
 
 .seed-item {
@@ -170,8 +171,8 @@ h1 {
 .seed-item:hover,
 .seed-item.active {
   transform: translateY(-2px);
-  border-color: rgba(255, 211, 110, 0.5);
-  background: rgba(255, 211, 110, 0.1);
+  border-color: rgba(217, 144, 43, 0.36);
+  background: rgba(255, 229, 185, 0.68);
 }
 
 .seed-item strong,
@@ -205,7 +206,7 @@ h1 {
   align-items: center;
   border-radius: 28px;
   border: 1px solid var(--line);
-  background: linear-gradient(135deg, rgba(27, 28, 58, 0.9), rgba(17, 17, 35, 0.88));
+  background: linear-gradient(135deg, rgba(255, 248, 238, 0.95), rgba(247, 233, 213, 0.96));
   box-shadow: var(--shadow);
 }
 
@@ -231,15 +232,15 @@ h1 {
 }
 
 .primary-btn {
-  color: #241d10;
-  background: linear-gradient(135deg, #ffd36e, #ffb86b);
-  box-shadow: 0 12px 28px rgba(255, 190, 101, 0.26);
+  color: #fffdf8;
+  background: linear-gradient(135deg, #d9902b, #e4ab55);
+  box-shadow: 0 12px 28px rgba(217, 144, 43, 0.22);
 }
 
 .ghost-btn {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(166, 132, 92, 0.16);
 }
 
 .primary-btn:hover,
@@ -252,10 +253,10 @@ h1 {
   position: relative;
   padding: 26px;
   border-radius: 32px;
-  border: 1px solid rgba(145, 242, 202, 0.16);
+  border: 1px solid rgba(114, 185, 126, 0.18);
   background:
-    radial-gradient(circle at top center, rgba(138, 125, 255, 0.16), transparent 35%),
-    linear-gradient(180deg, rgba(18, 25, 53, 0.92), rgba(15, 29, 26, 0.9));
+    radial-gradient(circle at top center, rgba(255, 225, 177, 0.52), transparent 34%),
+    linear-gradient(180deg, rgba(255, 249, 240, 0.96), rgba(243, 233, 215, 0.98));
   box-shadow: var(--shadow);
   overflow: hidden;
 }
@@ -265,7 +266,7 @@ h1 {
   position: absolute;
   inset: auto 0 0 0;
   height: 38%;
-  background: linear-gradient(180deg, transparent, rgba(72, 113, 59, 0.35));
+  background: linear-gradient(180deg, transparent, rgba(156, 205, 139, 0.28));
   pointer-events: none;
 }
 
@@ -276,8 +277,8 @@ h1 {
   margin-bottom: 18px;
   padding: 8px 14px;
   border-radius: 999px;
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.62);
+  border: 1px solid rgba(166, 132, 92, 0.12);
 }
 
 .farm-grid {
@@ -293,8 +294,8 @@ h1 {
   padding: 16px;
   text-align: left;
   border-radius: 24px;
-  border: 1px solid rgba(255,255,255,0.08);
-  background: linear-gradient(180deg, rgba(55, 38, 40, 0.55), rgba(49, 30, 18, 0.95));
+  border: 1px solid rgba(166, 132, 92, 0.14);
+  background: linear-gradient(180deg, rgba(251, 241, 224, 0.95), rgba(234, 214, 185, 0.98));
   color: var(--text);
   overflow: hidden;
   cursor: pointer;
@@ -308,20 +309,20 @@ h1 {
   bottom: 12px;
   height: 10px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(92, 67, 38, 0.12);
 }
 
 .plot[data-state="empty"] {
-  background: linear-gradient(180deg, rgba(52, 35, 29, 0.82), rgba(65, 41, 26, 0.96));
+  background: linear-gradient(180deg, rgba(241, 225, 200, 0.98), rgba(224, 197, 157, 0.98));
 }
 
 .plot[data-state="growing"] {
-  background: linear-gradient(180deg, rgba(40, 59, 47, 0.84), rgba(34, 49, 32, 0.96));
+  background: linear-gradient(180deg, rgba(214, 239, 204, 0.98), rgba(169, 208, 152, 0.98));
 }
 
 .plot[data-ready="true"] {
-  background: linear-gradient(180deg, rgba(83, 59, 24, 0.78), rgba(84, 63, 28, 0.98));
-  box-shadow: inset 0 0 0 1px rgba(255, 211, 110, 0.2), 0 0 22px rgba(255, 211, 110, 0.08);
+  background: linear-gradient(180deg, rgba(255, 228, 173, 0.98), rgba(233, 186, 104, 0.98));
+  box-shadow: inset 0 0 0 1px rgba(217, 144, 43, 0.18), 0 0 22px rgba(217, 144, 43, 0.08);
 }
 
 .plot-name {
@@ -339,7 +340,7 @@ h1 {
   height: 8px;
   border-radius: 999px;
   overflow: hidden;
-  background: rgba(255,255,255,0.08);
+  background: rgba(92, 67, 38, 0.12);
 }
 
 .plot-progress i {
@@ -371,8 +372,8 @@ h1 {
 }
 
 .shop-item button {
-  color: #1c1834;
-  background: linear-gradient(135deg, var(--mint), #c8f9c2);
+  color: #fffdf8;
+  background: linear-gradient(135deg, var(--mint), #8bc68d);
 }
 
 .shop-item button[disabled] {
