@@ -42,6 +42,10 @@ const els = {
   scrollBtn: $("#scroll-btn"),
   colDividerLeft: $("#col-divider-left"),
   colDividerRight: $("#col-divider-right"),
+  btnCollapseLeft: $("#btn-collapse-left"),
+  btnCollapseRight: $("#btn-collapse-right"),
+  btnExpandLeft: $("#btn-expand-left"),
+  btnExpandRight: $("#btn-expand-right"),
   minimap: $("#minimap"),
   mmInner: $("#minimap-inner"),
   mmCanvas: $("#mm-canvas"),
@@ -158,6 +162,7 @@ let state = {
 };
 
 const COLS_KEY = "pooh.cols.v1";
+const COLLAPSE_KEY = "pooh.collapse.v1";
 
 // ─── Column dividers ───
 function applyCols(ratios) {
@@ -187,10 +192,48 @@ function loadCols() {
 
 function positionDividers() {
   if (!els.leftPane || !els.middlePane || !els.colDividerLeft || !els.colDividerRight) return;
-  const leftW = els.leftPane.getBoundingClientRect().width;
+  const leftCollapsed = els.app?.classList.contains("left-collapsed");
+  const leftW = leftCollapsed ? 0 : els.leftPane.getBoundingClientRect().width;
   const midW = els.middlePane.getBoundingClientRect().width;
   els.colDividerLeft.style.left = `${leftW}px`;
   els.colDividerRight.style.left = `${leftW + midW}px`;
+}
+
+function setPaneCollapsed(side, collapsed, persist = true) {
+  if (!els.app) return;
+  const cls = side === "left" ? "left-collapsed" : "right-collapsed";
+  els.app.classList.toggle(cls, !!collapsed);
+  if (persist) {
+    try {
+      localStorage.setItem(
+        COLLAPSE_KEY,
+        JSON.stringify({
+          left: els.app.classList.contains("left-collapsed"),
+          right: els.app.classList.contains("right-collapsed"),
+        }),
+      );
+    } catch (_) {}
+  }
+  positionDividers();
+  scheduleMinimapRebuild();
+}
+
+function togglePaneCollapsed(side) {
+  const cls = side === "left" ? "left-collapsed" : "right-collapsed";
+  const currently = !!els.app?.classList.contains(cls);
+  setPaneCollapsed(side, !currently);
+}
+
+function loadCollapse() {
+  try {
+    const raw = localStorage.getItem(COLLAPSE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      setPaneCollapsed("left", !!parsed.left, false);
+      setPaneCollapsed("right", !!parsed.right, false);
+    }
+  } catch (_) {}
 }
 
 function bindDividerDrag(divider, isLeft) {
@@ -2666,6 +2709,13 @@ bindDividerDrag(els.colDividerLeft, true);
 bindDividerDrag(els.colDividerRight, false);
 window.addEventListener("resize", positionDividers);
 loadCols();
+
+// Pane collapse
+els.btnCollapseLeft?.addEventListener("click", () => togglePaneCollapsed("left"));
+els.btnCollapseRight?.addEventListener("click", () => togglePaneCollapsed("right"));
+els.btnExpandLeft?.addEventListener("click", () => setPaneCollapsed("left", false));
+els.btnExpandRight?.addEventListener("click", () => setPaneCollapsed("right", false));
+loadCollapse();
 
 // Minimap init
 bindMinimap();

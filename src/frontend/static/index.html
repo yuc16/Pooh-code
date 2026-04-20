@@ -35,6 +35,12 @@
             <path d="M3 21v-5h5"></path>
           </svg>
         </button>
+        <button class="icon-btn" id="btn-collapse-left" title="折叠左栏" aria-label="折叠左栏">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="m15 6-6 6 6 6"></path>
+          </svg>
+        </button>
       </div>
 
       <div class="search">
@@ -186,6 +192,12 @@
 
     <aside class="pane right-pane" id="right-pane">
       <div class="pane-head">
+        <button class="icon-btn" id="btn-collapse-right" title="折叠右栏" aria-label="折叠右栏">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="m9 6 6 6-6 6"></path>
+          </svg>
+        </button>
         <div class="title-sm">Minimap</div>
         <div class="spacer"></div>
         <button class="icon-btn" id="btn-minimap-jump" title="回到底部" aria-label="回到底部">
@@ -210,6 +222,21 @@
     <div class="col-divider" id="col-divider-right" title="拖动调整右栏宽度">
       <div class="col-divider-grip"></div>
     </div>
+
+    <button class="collapse-handle collapse-handle-left" id="btn-expand-left" type="button" title="展开左栏"
+      aria-label="展开左栏">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75"
+        stroke-linecap="round" stroke-linejoin="round">
+        <path d="m9 6 6 6-6 6"></path>
+      </svg>
+    </button>
+    <button class="collapse-handle collapse-handle-right" id="btn-expand-right" type="button" title="展开右栏"
+      aria-label="展开右栏">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75"
+        stroke-linecap="round" stroke-linejoin="round">
+        <path d="m15 6-6 6 6 6"></path>
+      </svg>
+    </button>
   </div>
 
   <div class="image-lightbox hidden" id="image-lightbox" aria-hidden="true">
