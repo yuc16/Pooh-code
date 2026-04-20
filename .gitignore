@@ -12,6 +12,7 @@ workplace/runtime/cache/
 workplace/runtime/logs/
 workplace/runtime/sessions/
 workplace/runtime/config/settings.json
+workplace/runtime/auth.db
 # agent 产出专区,有独立的 git 仓库推到 temp 分支,不要被主仓库跟踪
 workplace/output/
 workplace/uploads/

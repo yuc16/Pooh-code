@@ -552,12 +552,24 @@ function shouldStreamRenderMarkdown(text) {
   return /[`*_#>\-\[\]\(\)\n|]/.test(value);
 }
 
+function shouldDeferMarkdownUntilFinal(raw) {
+  const value = typeof raw === "string" ? raw : "";
+  if (!value) return false;
+  if (value.length > 1800) return true;
+  if (/```/.test(value)) return true;
+  if (/\n\|.*\|/.test(value)) return true;
+  if (/^\s*[-*]\s/m.test(value)) return true;
+  if (/^\s*\d+\.\s/m.test(value)) return true;
+  return false;
+}
+
 function streamRenderDelay(raw) {
   const size = (raw || "").length;
-  if (size > 32000) return 220;
-  if (size > 16000) return 180;
-  if (size > 8000) return 140;
-  return 90;
+  if (size > 32000) return 420;
+  if (size > 16000) return 320;
+  if (size > 8000) return 240;
+  if (size > 3000) return 180;
+  return 120;
 }
 
 function renderStreamingTextPart(part) {
@@ -570,6 +582,12 @@ function renderStreamingTextPart(part) {
     return;
   }
   if (!shouldStreamRenderMarkdown(raw)) {
+    part.el.textContent = raw;
+    part.el.classList.remove("rendered");
+    autoScrollIfNear();
+    return;
+  }
+  if (shouldDeferMarkdownUntilFinal(raw)) {
     part.el.textContent = raw;
     part.el.classList.remove("rendered");
     autoScrollIfNear();
@@ -610,6 +628,37 @@ function finalizeStreamingTextPart(part) {
   part.el.classList.add("rendered");
   part.el.innerHTML = renderMarkdown(trimmed);
   enhanceRenderedContent(part.el);
+}
+
+function reasoningRenderDelay(raw) {
+  const size = (raw || "").length;
+  if (size > 20000) return 280;
+  if (size > 8000) return 200;
+  return 120;
+}
+
+function renderReasoningBlock(blockState) {
+  if (!blockState || !blockState.el) return;
+  blockState.renderHandle = null;
+  blockState.renderedRaw = blockState.raw || "";
+  blockState.el.textContent = blockState.renderedRaw;
+  autoScrollIfNear();
+}
+
+function scheduleReasoningRender(blockState, { force = false } = {}) {
+  if (!blockState || !blockState.el) return;
+  if (force) {
+    if (blockState.renderHandle) {
+      window.clearTimeout(blockState.renderHandle);
+      blockState.renderHandle = null;
+    }
+    renderReasoningBlock(blockState);
+    return;
+  }
+  if (blockState.renderHandle) return;
+  blockState.renderHandle = window.setTimeout(() => {
+    renderReasoningBlock(blockState);
+  }, reasoningRenderDelay(blockState.raw));
 }
 
 let _msgIndex = 0;
@@ -1464,7 +1513,10 @@ function finalizeToolGroup(bubble) {
 
 function _endOtherBlocks(bubble, keep) {
   if (keep !== "text") bubble.currentText = null;
-  if (keep !== "reasoning") bubble._currentReasoning = null;
+  if (keep !== "reasoning" && bubble._currentReasoning) {
+    scheduleReasoningRender(bubble._currentReasoning, { force: true });
+    bubble._currentReasoning = null;
+  }
   if (keep !== "tool") finalizeToolGroup(bubble);
 }
 
@@ -1499,13 +1551,21 @@ function appendReasoningDelta(bubble, delta) {
     block.className = "reasoning-block stream-part";
     block.innerHTML = `<div class="reasoning-label">REASONING</div><div class="reasoning-text"></div>`;
     bubble.body.appendChild(block);
-    bubble._currentReasoning = block.querySelector(".reasoning-text");
+    bubble._currentReasoning = {
+      el: block.querySelector(".reasoning-text"),
+      raw: "",
+      renderedRaw: "",
+      renderHandle: null,
+    };
   }
-  bubble._currentReasoning.appendChild(document.createTextNode(delta));
-  autoScrollIfNear();
+  bubble._currentReasoning.raw += delta;
+  scheduleReasoningRender(bubble._currentReasoning);
 }
 
 function startReasoningPart(bubble) {
+  if (bubble._currentReasoning) {
+    scheduleReasoningRender(bubble._currentReasoning, { force: true });
+  }
   bubble._currentReasoning = null;
 }
 
@@ -1757,6 +1817,10 @@ async function streamChat(text, files = []) {
         if (canRenderStream()) {
           agentStatus.set("idle", "完成", "回答已返回");
           removeCursor(bubble);
+          if (bubble._currentReasoning) {
+            scheduleReasoningRender(bubble._currentReasoning, { force: true });
+            bubble._currentReasoning = null;
+          }
           finalizeToolGroup(bubble);
           for (const part of bubble.textParts) {
             finalizeStreamingTextPart(part);
@@ -1840,6 +1904,10 @@ async function streamChat(text, files = []) {
   } finally {
     try { await reader.cancel(); } catch (_) {}
     removeCursor(bubble);
+    if (bubble._currentReasoning) {
+      scheduleReasoningRender(bubble._currentReasoning, { force: true });
+      bubble._currentReasoning = null;
+    }
     finalizeToolGroup(bubble);
     if (!finished) {
       for (const part of bubble.textParts) {

@@ -50,6 +50,10 @@ UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "workplace" / "uplo
 WEB_CHANNEL = "web"
 WEB_ACCOUNT = "user"  # 固定前缀；真正的隔离来自 user_id
 AUTH_COOKIE = "pooh_token"
+SSE_TEXT_BATCH_WINDOW = 0.06
+SSE_TEXT_BATCH_CHARS = 160
+SSE_REASONING_BATCH_WINDOW = 0.12
+SSE_REASONING_BATCH_CHARS = 320
 AUTH_EXEMPT_PATHS = {
     "/", "/index.html", "/login", "/login.html",
     "/api/auth/login", "/api/auth/register", "/api/auth/me", "/api/auth/logout",
@@ -790,6 +794,12 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         closed = {"v": False}
+        pending = {
+            "text_delta": "",
+            "reasoning_delta": "",
+            "text_started_at": 0.0,
+            "reasoning_started_at": 0.0,
+        }
 
         def _write_sse(event_type: str, payload: dict[str, Any]) -> None:
             if closed["v"]:
@@ -805,7 +815,60 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 closed["v"] = True
 
+        def _flush_text_delta() -> None:
+            text_buf = pending["text_delta"]
+            if not text_buf:
+                return
+            pending["text_delta"] = ""
+            pending["text_started_at"] = 0.0
+            _write_sse("text_delta", {"text": text_buf})
+
+        def _flush_reasoning_delta() -> None:
+            reasoning_buf = pending["reasoning_delta"]
+            if not reasoning_buf:
+                return
+            pending["reasoning_delta"] = ""
+            pending["reasoning_started_at"] = 0.0
+            _write_sse("reasoning_delta", {"text": reasoning_buf})
+
+        def _flush_pending() -> None:
+            _flush_text_delta()
+            _flush_reasoning_delta()
+
         def on_event(kind: str, payload: dict[str, Any]) -> None:
+            now = time.monotonic()
+
+            if kind == "text_delta":
+                delta = str(payload.get("text", "") or "")
+                if not delta:
+                    return
+                if pending["text_delta"]:
+                    elapsed = now - float(pending["text_started_at"] or now)
+                    if elapsed >= SSE_TEXT_BATCH_WINDOW or len(pending["text_delta"]) >= SSE_TEXT_BATCH_CHARS:
+                        _flush_text_delta()
+                if not pending["text_delta"]:
+                    pending["text_started_at"] = now
+                pending["text_delta"] += delta
+                if len(pending["text_delta"]) >= SSE_TEXT_BATCH_CHARS:
+                    _flush_text_delta()
+                return
+
+            if kind == "reasoning_delta":
+                delta = str(payload.get("text", "") or "")
+                if not delta:
+                    return
+                if pending["reasoning_delta"]:
+                    elapsed = now - float(pending["reasoning_started_at"] or now)
+                    if elapsed >= SSE_REASONING_BATCH_WINDOW or len(pending["reasoning_delta"]) >= SSE_REASONING_BATCH_CHARS:
+                        _flush_reasoning_delta()
+                if not pending["reasoning_delta"]:
+                    pending["reasoning_started_at"] = now
+                pending["reasoning_delta"] += delta
+                if len(pending["reasoning_delta"]) >= SSE_REASONING_BATCH_CHARS:
+                    _flush_reasoning_delta()
+                return
+
+            _flush_pending()
             _write_sse(kind, payload)
 
         try:
@@ -818,17 +881,21 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 files=files or None,
                 inject_drain=run.drain_injects,
             )
+            _flush_pending()
             _write_sse("state", self._state_payload(session_id))
         except concurrent.futures.CancelledError:
+            _flush_pending()
             _write_sse("cancelled", {"session_id": session_id})
         except Exception as exc:
             traceback.print_exc()
+            _flush_pending()
             _write_sse("error", {"error": str(exc)})
         finally:
             self.server.runs.finish(run)
 
         if not closed["v"]:
             try:
+                _flush_pending()
                 self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()
             except Exception:
