@@ -546,21 +546,72 @@ function renderMarkdown(text) {
   return renderInline(text);
 }
 
+const markdownWorkerState = {
+  worker: null,
+  nextId: 0,
+  pending: new Map(),
+  disabled: false,
+};
+
+function ensureMarkdownWorker() {
+  if (markdownWorkerState.disabled) return null;
+  if (markdownWorkerState.worker) return markdownWorkerState.worker;
+  if (typeof Worker === "undefined") {
+    markdownWorkerState.disabled = true;
+    return null;
+  }
+  try {
+    const worker = new Worker("/static/markdown-worker.js?v=20260420a");
+    worker.addEventListener("message", (event) => {
+      const { id, html } = event.data || {};
+      const callback = markdownWorkerState.pending.get(id);
+      if (!callback) return;
+      markdownWorkerState.pending.delete(id);
+      callback(typeof html === "string" ? html : "");
+    });
+    worker.addEventListener("error", () => {
+      markdownWorkerState.disabled = true;
+      for (const [, callback] of markdownWorkerState.pending) {
+        callback(null);
+      }
+      markdownWorkerState.pending.clear();
+      try { worker.terminate(); } catch (_) {}
+      markdownWorkerState.worker = null;
+    });
+    markdownWorkerState.worker = worker;
+    return worker;
+  } catch (_) {
+    markdownWorkerState.disabled = true;
+    return null;
+  }
+}
+
+function requestMarkdownHTML(text, onDone) {
+  const worker = ensureMarkdownWorker();
+  if (!worker) {
+    onDone(renderMarkdown(text));
+    return;
+  }
+  const id = ++markdownWorkerState.nextId;
+  markdownWorkerState.pending.set(id, onDone);
+  worker.postMessage({ id, text });
+}
+
+function applyStreamingRenderedHTML(part, raw, html, { enhance = false, finalized = false } = {}) {
+  if (!part || !part.el) return;
+  if (part._renderSource !== raw) return;
+  part.renderedRaw = raw;
+  part.el.classList.add("rendered");
+  part.el.innerHTML = html;
+  if (enhance) enhanceRenderedContent(part.el);
+  if (finalized) part.finalized = true;
+  autoScrollIfNear();
+}
+
 function shouldStreamRenderMarkdown(text) {
   const value = typeof text === "string" ? text : "";
   if (!value) return false;
   return /[`*_#>\-\[\]\(\)\n|]/.test(value);
-}
-
-function shouldDeferMarkdownUntilFinal(raw) {
-  const value = typeof raw === "string" ? raw : "";
-  if (!value) return false;
-  if (value.length > 1800) return true;
-  if (/```/.test(value)) return true;
-  if (/\n\|.*\|/.test(value)) return true;
-  if (/^\s*[-*]\s/m.test(value)) return true;
-  if (/^\s*\d+\.\s/m.test(value)) return true;
-  return false;
 }
 
 function streamRenderDelay(raw) {
@@ -572,30 +623,50 @@ function streamRenderDelay(raw) {
   return 120;
 }
 
+function countFenceMarkers(raw) {
+  return ((raw || "").match(/```/g) || []).length;
+}
+
+function findStreamingSplitIndex(raw) {
+  const value = typeof raw === "string" ? raw : "";
+  if (value.length < 2200) return -1;
+  if (countFenceMarkers(value) % 2 === 1) return -1;
+
+  const softTail = 700;
+  const searchLimit = Math.max(0, value.length - softTail);
+  const doubleBreak = value.lastIndexOf("\n\n", searchLimit);
+  if (doubleBreak >= 800) return doubleBreak + 2;
+
+  const singleBreak = value.lastIndexOf("\n", searchLimit);
+  if (singleBreak >= 1200) return singleBreak + 1;
+
+  return -1;
+}
+
 function renderStreamingTextPart(part) {
   if (!part || !part.el) return;
   const raw = part.raw || "";
-  part.renderedRaw = raw;
   part.renderHandle = null;
   if (!raw) {
+    part._renderSource = "";
     part.el.textContent = "";
     return;
   }
   if (!shouldStreamRenderMarkdown(raw)) {
+    part._renderSource = raw;
+    part.renderedRaw = raw;
     part.el.textContent = raw;
     part.el.classList.remove("rendered");
     autoScrollIfNear();
     return;
   }
-  if (shouldDeferMarkdownUntilFinal(raw)) {
-    part.el.textContent = raw;
-    part.el.classList.remove("rendered");
-    autoScrollIfNear();
-    return;
-  }
-  part.el.classList.add("rendered");
-  part.el.innerHTML = renderMarkdown(raw);
-  autoScrollIfNear();
+  part._renderSource = raw;
+  requestMarkdownHTML(raw, (html) => {
+    if (typeof html !== "string") {
+      html = renderMarkdown(raw);
+    }
+    applyStreamingRenderedHTML(part, raw, html);
+  });
 }
 
 function scheduleStreamingTextRender(part, { force = false } = {}) {
@@ -622,12 +693,68 @@ function finalizeStreamingTextPart(part) {
   }
   const trimmed = (part.raw || "").trim();
   if (!trimmed) {
+    part._renderSource = "";
     part.el.textContent = "";
     return;
   }
-  part.el.classList.add("rendered");
-  part.el.innerHTML = renderMarkdown(trimmed);
-  enhanceRenderedContent(part.el);
+  part._renderSource = trimmed;
+  requestMarkdownHTML(trimmed, (html) => {
+    if (typeof html !== "string") {
+      html = renderMarkdown(trimmed);
+    }
+    applyStreamingRenderedHTML(part, trimmed, html, { enhance: true });
+  });
+}
+
+function createStreamingTextPart() {
+  const el = document.createElement("div");
+  el.className = "stream-part";
+  return { el, raw: "", renderedRaw: "", renderHandle: null, finalized: false, _renderSource: "" };
+}
+
+function appendStreamingPart(bubble) {
+  const part = createStreamingTextPart();
+  bubble.body.appendChild(part.el);
+  bubble.currentText = part.el;
+  bubble.textParts.push(part);
+  return part;
+}
+
+function finalizeCompletedStreamingChunk(part) {
+  if (!part || part.finalized) return;
+  if (part.renderHandle) {
+    window.clearTimeout(part.renderHandle);
+    part.renderHandle = null;
+  }
+  const raw = part.raw || "";
+  if (!raw.trim()) {
+    part._renderSource = "";
+    part.el.textContent = "";
+    part.finalized = true;
+    return;
+  }
+  part._renderSource = raw;
+  requestMarkdownHTML(raw, (html) => {
+    if (typeof html !== "string") {
+      html = renderMarkdown(raw);
+    }
+    applyStreamingRenderedHTML(part, raw, html, { enhance: true, finalized: true });
+  });
+}
+
+function maybeSplitStreamingPart(bubble, part) {
+  if (!bubble || !part || part.finalized) return part;
+  const splitIndex = findStreamingSplitIndex(part.raw);
+  if (splitIndex < 0) return part;
+
+  const completedRaw = part.raw.slice(0, splitIndex);
+  const remainderRaw = part.raw.slice(splitIndex);
+  part.raw = completedRaw;
+  finalizeCompletedStreamingChunk(part);
+
+  const nextPart = appendStreamingPart(bubble);
+  nextPart.raw = remainderRaw;
+  return nextPart;
 }
 
 function reasoningRenderDelay(raw) {
@@ -1526,18 +1653,15 @@ function appendTextDelta(bubble, delta) {
   bubble.root.classList.remove("tools-only");
   bubble.body.classList.add("rendered");
   if (!bubble.currentText) {
-    const span = document.createElement("div");
-    span.className = "stream-part";
-    bubble.body.appendChild(span);
-    bubble.currentText = span;
-    bubble.textParts.push({ el: span, raw: "", renderedRaw: "", renderHandle: null });
+    appendStreamingPart(bubble);
   }
-  const part = bubble.textParts[bubble.textParts.length - 1];
+  let part = bubble.textParts[bubble.textParts.length - 1];
   part.raw += delta;
   setCopyButtonState(
     bubble.copyBtn,
-    bubble.textParts.map((p) => p.raw).join("\n\n"),
+    bubble.textParts.map((p) => p.raw).join(""),
   );
+  part = maybeSplitStreamingPart(bubble, part);
   scheduleStreamingTextRender(part);
   ensureCursor(bubble);
   autoScrollIfNear();
@@ -1832,7 +1956,7 @@ async function streamChat(text, files = []) {
           }
           setCopyButtonState(
             bubble.copyBtn,
-            bubble.textParts.map((p) => p.raw).join("\n\n") || evt.text || "",
+            bubble.textParts.map((p) => p.raw).join("") || evt.text || "",
           );
           scheduleMinimapRebuild();
         }

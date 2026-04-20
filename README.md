@@ -277,7 +277,7 @@ Web 端走「邮箱 + 密码」账号体系，每个用户自己的 `session_key
 - 输入框：Enter 发送，Shift+Enter 换行，⌘↵ 发送；textarea 高度自动增长；附件栏与引用条会自动收起/展开；composer 下方一排 chip 提供 `图片生成` `/help` `/tools` `/skills` `/clear` `/compact` 快捷入口，其中 slash 命令 **点击即直接发送执行**；`图片生成` 是一个可切换模式，启用后 placeholder 会变成“描述你想生成的图片…”，并把同一会话里的生成结果同时写进聊天区和左栏该 session 的产物归档；**agent 运行时输入框保持可用**——用户可随时输入并发送「插话」消息（走 `POST /api/session/inject`），消息会被推入运行中 session 的注入队列，agent 在当前工具执行完、下一轮 LLM 调用前自动读取并追加到 transcript，SSE 流会发一条 `injected` 事件通知前端（在助手气泡中内联显示琥珀色 USER 标签 + 插话内容）；placeholder 会切换为"继续发送消息，Agent 将在下一轮看到"提示；运行时也仍有 `停止` 按钮可用
 - 当本轮发生过插话时，前端会在流结束后对当前会话做一次静默重排刷新，避免 optimistic user 气泡残留在列表最末端，保证最终顺序和 transcript 一致
 - composer 已从聊天滚动容器中拆出，固定挂在中栏底部；同时聊天滚动区底部留白会跟随 composer 实际高度动态同步，避免流式输出（SSE）期间正文被底部输入框压住，看起来像“输入框插进回复中间”
-- 针对超长 SSE 流式回复，现在做了双层降载：服务端会先把细碎的 `text_delta / reasoning_delta` 合帧后再推给前端，前端则对长文本优先以纯文本增量显示、只在收尾时统一做 Markdown 渲染；`reasoning` 片段也改成缓冲后批量刷入，避免服务器正常但浏览器因频繁 `marked.parse + innerHTML` 重排而卡死
+- 针对超长 SSE 流式回复，现在做了双层降载：服务端会先把细碎的 `text_delta / reasoning_delta` 合帧后再推给前端；前端仍保持**边 SSE 边渲染 Markdown**，但会把前面已经稳定的内容分块定稿，只让末尾仍在增长的那一小段继续重渲染，同时把 Markdown 解析挪到 `markdown-worker.js` 里的 `Web Worker` 后台线程，主线程只负责接收 HTML 和更新 DOM；`reasoning` 片段也改成缓冲后批量刷入，避免服务器正常但浏览器因整段频繁 `marked.parse + innerHTML` 重排而卡死
 - 文件上传：输入框左侧的 📎 按钮或拖放文件到输入区域均可添加附件；支持图片（png/jpg/gif/webp）、视频（mp4/mov/avi/webm）、PDF、Office 文档（docx/xlsx/pptx）、CSV、纯文本等；附件会显示为预览条，可单独移除。各类型文件的处理方式：
   - **图片** → base64 编码直接发给多模态 LLM
   - **视频** → 由于当前主流多模态模型（GPT-4o、GPT-4.1 等）尚不支持直接接收视频，需要拆解为模型能理解的格式：ffmpeg 提取关键帧（每 10 秒一帧，最多 4 帧）转为图片 + ffmpeg 提取音频后用 `faster-whisper` 本地模型语音转文字，最终以「关键帧图片 + 带时间戳的语音文本」形式发给 LLM
