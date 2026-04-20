@@ -1227,6 +1227,93 @@ function buildHistoryMessageNode(message) {
   return null;
 }
 
+function _wrapToolMega(nodes, kindClass) {
+  if (!nodes || nodes.length < 2) return;
+  const parent = nodes[0].parentNode;
+  if (!parent) return;
+  let totalTools = 0;
+  for (const node of nodes) {
+    totalTools += node.querySelectorAll?.(".tool-block").length || 0;
+  }
+  if (!totalTools) totalTools = nodes.length;
+
+  const mega = document.createElement("div");
+  mega.className = `tools-mega collapsed ${kindClass}`;
+  const head = document.createElement("div");
+  head.className = "tools-mega-head";
+  head.innerHTML = `
+    <span class="thinking-icon">⊙</span>
+    <span class="thinking-label">已处理</span>
+    <span class="thinking-count">${totalTools} 个工具调用</span>
+    <span class="tools-mega-hint">展开详情</span>
+    <span class="caret">▾</span>
+  `;
+  head.addEventListener("click", () => {
+    const willCollapse = !mega.classList.contains("collapsed");
+    mega.classList.toggle("collapsed");
+    const hint = head.querySelector(".tools-mega-hint");
+    if (hint) hint.textContent = willCollapse ? "展开详情" : "点击收起";
+  });
+  const body = document.createElement("div");
+  body.className = "tools-mega-body";
+  mega.appendChild(head);
+  mega.appendChild(body);
+  parent.insertBefore(mega, nodes[0]);
+  for (const node of nodes) body.appendChild(node);
+}
+
+function _wrapConsecutiveRuns(container, matcher, kindClass) {
+  if (!container) return;
+  const children = Array.from(container.children);
+  let i = 0;
+  const runs = [];
+  while (i < children.length) {
+    const node = children[i];
+    if (
+      node &&
+      !node.classList?.contains("tools-mega") &&
+      !node.closest?.(".tools-mega") &&
+      matcher(node)
+    ) {
+      let j = i + 1;
+      while (j < children.length && matcher(children[j]) && !children[j].classList?.contains("tools-mega")) j++;
+      if (j - i >= 2) runs.push(children.slice(i, j));
+      i = j;
+    } else {
+      i++;
+    }
+  }
+  for (const run of runs) _wrapToolMega(run, kindClass);
+}
+
+function applyToolMegaCollapse(scope) {
+  if (scope) {
+    _wrapConsecutiveRuns(
+      scope,
+      (n) => n.classList?.contains("thinking-group"),
+      "tools-mega-inline",
+    );
+    return;
+  }
+  const root = els.chatInner;
+  if (!root) return;
+
+  _wrapConsecutiveRuns(
+    root,
+    (n) => n.classList?.contains("msg") && n.classList?.contains("a") && n.classList?.contains("tools-only"),
+    "tools-mega-history",
+  );
+
+  for (const body of root.querySelectorAll(".msg.a .bubble > .body")) {
+    if (body.closest(".tools-mega-body")) continue;
+    _wrapConsecutiveRuns(
+      body,
+      (n) => n.classList?.contains("thinking-group"),
+      "tools-mega-inline",
+    );
+  }
+}
+
 function nextPaint() {
   return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
 }
@@ -1325,6 +1412,7 @@ async function refreshMessages() {
         }
       }
     }
+    applyToolMegaCollapse();
     if ((data.messages || []).length > 0) {
       els.messages.scrollTop = els.messages.scrollHeight;
     }
@@ -2001,6 +2089,7 @@ async function streamChat(text, files = []) {
             bubble.copyBtn,
             bubble.textParts.map((p) => p.raw).join("") || evt.text || "",
           );
+          applyToolMegaCollapse(bubble.body);
           scheduleMinimapRebuild();
         }
         if (evt.session_id && state.sessionId === launchedSessionId) {

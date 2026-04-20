@@ -1380,6 +1380,57 @@ body.lightbox-open {
   margin-bottom: 0;
 }
 
+/* Mega fold — 把一整段连续的工具调用再外裹一层，默认折叠 */
+.tools-mega {
+  margin: 6px 0;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+.tools-mega-head {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 38px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+  user-select: none;
+}
+.tools-mega-head:hover { background: var(--bg-sunken); }
+.tools-mega-head .thinking-icon { color: var(--accent); }
+.tools-mega-head .thinking-label { color: var(--ink-2); }
+.tools-mega-head .thinking-count { color: var(--ink-4); }
+.tools-mega-head .tools-mega-hint {
+  margin-left: auto;
+  color: var(--ink-4);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+.tools-mega-head .caret {
+  color: var(--ink-4);
+  transition: transform .2s;
+}
+.tools-mega.collapsed .tools-mega-head .caret { transform: rotate(-90deg); }
+.tools-mega-body {
+  padding: 6px 10px 10px;
+  border-top: 1px solid var(--rule-soft);
+  background: var(--bg);
+  display: flex; flex-direction: column;
+}
+.tools-mega.collapsed .tools-mega-body { display: none; }
+/* 嵌入历史版 tools-only 气泡时抹去原来的外边距/头部占位 */
+.tools-mega-body .msg.a.tools-only {
+  margin: 0;
+  gap: 0;
+}
+.tools-mega-body .msg.a.tools-only + .msg.a.tools-only {
+  margin-top: 2px;
+}
+.tools-mega-body .msg.a.tools-only .bubble .body { padding: 0; }
+.tools-mega-body .thinking-group { margin: 2px 0; }
+
 /* Reasoning block */
 .reasoning-block {
   margin: 8px 0;
