@@ -148,6 +148,8 @@ let state = {
   messageRenderSeq: 0,
   sessions: [],
   fileGroups: [],
+  sessionViewCache: new Map(),
+  sessionMessageSignatures: new Map(),
   openConvos: new Set(),
   sessionFilter: "",
   replyCtx: null, // { who, text }
@@ -1323,6 +1325,85 @@ function clearMessages() {
   els.chatInner.appendChild(els.emptyHint);
 }
 
+function _hashString(input, seed = 2166136261) {
+  let hash = seed >>> 0;
+  const text = String(input || "");
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function buildMessageSignature(messages = []) {
+  let hash = 2166136261;
+  for (const message of messages) {
+    if (!message) continue;
+    hash = _hashString(message.role || "", hash);
+    hash = _hashString(message.ts || "", hash);
+    hash = _hashString(message.mode || "", hash);
+    hash = _hashString(message.model || "", hash);
+    hash = _hashString(message.text || "", hash);
+    for (const attachment of message.attachments || []) {
+      hash = _hashString(attachment.kind || "", hash);
+      hash = _hashString(attachment.name || "", hash);
+      hash = _hashString(attachment.url || "", hash);
+      hash = _hashString(attachment.size || "", hash);
+    }
+    for (const tool of message.tools || []) {
+      hash = _hashString(tool.name || "", hash);
+      hash = _hashString(JSON.stringify(tool.input || {}), hash);
+      hash = _hashString(tool.result || "", hash);
+      hash = _hashString(tool.is_error ? "1" : "0", hash);
+    }
+  }
+  return `${messages.length}:${(hash >>> 0).toString(16)}`;
+}
+
+function _collectChatNodes() {
+  return Array.from(els.chatInner?.childNodes || []).filter((node) => node !== els.emptyHint);
+}
+
+function updateSessionViewCache(sessionId, { signature } = {}) {
+  if (!sessionId || !els.chatInner || !els.messages) return;
+  const nodes = _collectChatNodes();
+  state.sessionViewCache.set(sessionId, {
+    nodes,
+    scrollTop: els.messages.scrollTop,
+    hasMessages: nodes.some((node) => node.nodeType === Node.ELEMENT_NODE && node.classList?.contains("msg")),
+    signature: signature ?? state.sessionMessageSignatures.get(sessionId) ?? null,
+  });
+}
+
+function restoreSessionView(sessionId) {
+  if (!sessionId || !els.chatInner || !els.messages) return false;
+  const cached = state.sessionViewCache.get(sessionId);
+  if (!cached) return false;
+
+  clearMessages();
+  if (cached.nodes?.length) {
+    const frag = document.createDocumentFragment();
+    for (const node of cached.nodes) {
+      frag.appendChild(node);
+    }
+    els.chatInner.appendChild(frag);
+  }
+
+  syncIntroMode(!!cached.hasMessages);
+  els.messages.scrollTop = cached.hasMessages
+    ? Math.min(cached.scrollTop || 0, Math.max(0, els.messages.scrollHeight - els.messages.clientHeight))
+    : 0;
+  scheduleMinimapRebuild();
+  return true;
+}
+
+function ensureSessionViewAttached(sessionId) {
+  const cached = state.sessionViewCache.get(sessionId);
+  if (!cached?.nodes?.length) return false;
+  if (cached.nodes.every((node) => node.parentNode === els.chatInner)) return true;
+  return restoreSessionView(sessionId);
+}
+
 async function api(path, opts = {}) {
   const resp = await fetch(path, {
     method: opts.method || "GET",
@@ -1382,17 +1463,35 @@ function buildToolGroupHTML(tools) {
 
 async function refreshMessages() {
   try {
-    const query = state.sessionId ? `?session_id=${encodeURIComponent(state.sessionId)}` : "";
+    const requestSeq = ++state.messageRenderSeq;
+    const requestedSessionId = state.sessionId;
+    const query = requestedSessionId ? `?session_id=${encodeURIComponent(requestedSessionId)}` : "";
     const data = await api(`/api/messages${query}`);
-    const renderSeq = ++state.messageRenderSeq;
-    const sessionAtStart = state.sessionId;
+    if (requestSeq !== state.messageRenderSeq) return;
+    if (requestedSessionId && requestedSessionId !== state.sessionId) return;
     applyState(data);
-    clearMessages();
+    const activeSessionId = state.sessionId;
     const messages = data.messages || [];
+    const signature = buildMessageSignature(messages);
+    state.sessionMessageSignatures.set(activeSessionId, signature);
+    const liveBubble = state.liveBubbles.get(activeSessionId);
+    const cached = state.sessionViewCache.get(activeSessionId);
+    if (cached && !liveBubble && cached.signature === signature) {
+      if (!ensureSessionViewAttached(activeSessionId)) {
+        clearMessages();
+      }
+      syncIntroMode(!!cached.hasMessages);
+      if (!cached.hasMessages) {
+        els.messages.scrollTop = 0;
+      }
+      scheduleMinimapRebuild();
+      return;
+    }
+    clearMessages();
     syncIntroMode(messages.length > 0);
     const chunkSize = 6;
     for (let i = 0; i < messages.length; i += chunkSize) {
-      if (renderSeq !== state.messageRenderSeq || sessionAtStart !== state.sessionId) return;
+      if (requestSeq !== state.messageRenderSeq || activeSessionId !== state.sessionId) return;
       const frag = document.createDocumentFragment();
       for (const message of messages.slice(i, i + chunkSize)) {
         const node = buildHistoryMessageNode(message);
@@ -1401,12 +1500,12 @@ async function refreshMessages() {
       els.chatInner.appendChild(frag);
       await nextPaint();
     }
-    const liveBubble = state.liveBubbles.get(state.sessionId);
-    if (liveBubble) {
-      if (!liveBubble.root.isConnected) {
-        els.chatInner.appendChild(liveBubble.root);
+    const visibleLiveBubble = state.liveBubbles.get(activeSessionId);
+    if (visibleLiveBubble) {
+      if (!visibleLiveBubble.root.isConnected) {
+        els.chatInner.appendChild(visibleLiveBubble.root);
       }
-      for (const part of liveBubble.textParts || []) {
+      for (const part of visibleLiveBubble.textParts || []) {
         if ((part.raw || "") !== (part.renderedRaw || "")) {
           renderStreamingTextPart(part);
         }
@@ -1416,6 +1515,7 @@ async function refreshMessages() {
     if ((data.messages || []).length > 0) {
       els.messages.scrollTop = els.messages.scrollHeight;
     }
+    updateSessionViewCache(activeSessionId, { signature });
     scheduleMinimapRebuild();
   } catch (err) {
     agentStatus.set("error", "加载消息失败", err.message || "");
@@ -1716,6 +1816,9 @@ function startRenameChatTitle() {
 
 async function deleteSession(sessionId) {
   try {
+    state.sessionViewCache.delete(sessionId);
+    state.sessionMessageSignatures.delete(sessionId);
+    state.liveBubbles.delete(sessionId);
     const data = await api("/api/session/delete", {
       method: "POST",
       body: { session_id: sessionId },
@@ -2318,6 +2421,7 @@ async function sendMessage(text) {
 
 async function newSession() {
   try {
+    updateSessionViewCache(state.sessionId);
     const data = await api("/api/session/new", { method: "POST" });
     // Reset local filter so the new session is never hidden behind a stale search
     if (els.sessionSearch) els.sessionSearch.value = "";
@@ -2335,6 +2439,7 @@ async function newSession() {
 async function switchSession(prefix) {
   try {
     if (!prefix || prefix === state.sessionId) return;
+    updateSessionViewCache(state.sessionId);
     const data = await api("/api/session/switch", {
       method: "POST",
       body: { session_id_prefix: prefix, session_id: state.sessionId },
@@ -2342,6 +2447,7 @@ async function switchSession(prefix) {
     applyState(data);
     renderSessionList();
     refreshChatTitle();
+    restoreSessionView(state.sessionId);
     await refreshMessages();
     window.requestAnimationFrame(() => refreshSessions({ silent: true }));
     window.setTimeout(refreshFiles, 180);
