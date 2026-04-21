@@ -1404,6 +1404,15 @@ function ensureSessionViewAttached(sessionId) {
   return restoreSessionView(sessionId);
 }
 
+let sessionListRenderHandle = null;
+function scheduleSessionListRender() {
+  if (sessionListRenderHandle) return;
+  sessionListRenderHandle = window.requestAnimationFrame(() => {
+    sessionListRenderHandle = null;
+    renderSessionList();
+  });
+}
+
 async function api(path, opts = {}) {
   const resp = await fetch(path, {
     method: opts.method || "GET",
@@ -1582,7 +1591,7 @@ async function refreshSessions({ silent = false } = {}) {
     state.sessions = data.sessions || [];
     applyState(data);
     refreshChatTitle();
-    renderSessionList();
+    scheduleSessionListRender();
   } catch (err) {
     if (!silent) {
       agentStatus.set("error", "加载会话失败", err.message || "");
@@ -1595,7 +1604,7 @@ async function refreshFiles() {
     const data = await api("/api/files");
     applyState(data);
     state.fileGroups = data.groups || [];
-    renderSessionList();
+    scheduleSessionListRender();
   } catch (err) {
     // non-fatal
   }
@@ -1615,7 +1624,7 @@ function renderSessionList() {
     return hay.includes(filterVal);
   });
 
-  els.sessionList.innerHTML = "";
+  const frag = document.createDocumentFragment();
   let lastGroup = null;
   for (const item of list) {
     const group = _sessionDateLabel(item.last_active);
@@ -1624,7 +1633,7 @@ function renderSessionList() {
       const hdr = document.createElement("div");
       hdr.className = "section-label";
       hdr.textContent = group;
-      els.sessionList.appendChild(hdr);
+      frag.appendChild(hdr);
     }
 
     const files = filesBySession.get(item.session_id);
@@ -1708,7 +1717,7 @@ function renderSessionList() {
       if (item.session_id !== state.sessionId) {
         switchSession(item.session_id);
       } else {
-        renderSessionList();
+        scheduleSessionListRender();
       }
     });
     convo.querySelector(".convo-title").addEventListener("dblclick", (e) => {
@@ -1720,8 +1729,9 @@ function renderSessionList() {
       deleteSession(item.session_id);
     });
 
-    els.sessionList.appendChild(convo);
+    frag.appendChild(convo);
   }
+  els.sessionList.replaceChildren(frag);
 }
 
 function startRenameSession(row, sessionId, currentLabel) {
@@ -2445,12 +2455,10 @@ async function switchSession(prefix) {
       body: { session_id_prefix: prefix, session_id: state.sessionId },
     });
     applyState(data);
-    renderSessionList();
+    scheduleSessionListRender();
     refreshChatTitle();
     restoreSessionView(state.sessionId);
     await refreshMessages();
-    window.requestAnimationFrame(() => refreshSessions({ silent: true }));
-    window.setTimeout(refreshFiles, 180);
   } catch (err) {
     agentStatus.set("error", "切换会话失败", err.message);
   }
@@ -2574,17 +2582,24 @@ els.selectionQuoteBtn?.addEventListener("mousedown", (e) => e.preventDefault());
 // ─── Minimap ───
 let minimapRebuildHandle = null;
 function scheduleMinimapRebuild() {
-  if (minimapRebuildHandle) return;
-  minimapRebuildHandle = window.requestAnimationFrame(() => {
+  if (els.app?.classList.contains("right-collapsed")) return;
+  const flush = () => {
     minimapRebuildHandle = null;
     rebuildMinimap();
-  });
+  };
+  if (minimapRebuildHandle) return;
+  if (typeof window.requestIdleCallback === "function") {
+    minimapRebuildHandle = window.requestIdleCallback(flush, { timeout: 180 });
+    return;
+  }
+  minimapRebuildHandle = window.requestAnimationFrame(flush);
 }
 
 function rebuildMinimap() {
   if (!els.mmCanvas) return;
   const scroller = els.messages;
   if (!scroller) return;
+  if (els.app?.classList.contains("right-collapsed")) return;
   els.mmCanvas.innerHTML = "";
 
   const userMsgs = els.chatInner.querySelectorAll(".msg.u");
@@ -2858,7 +2873,7 @@ window.addEventListener("resize", hideSelectionQuoteAction);
 
 els.sessionSearch?.addEventListener("input", () => {
   state.sessionFilter = els.sessionSearch.value;
-  renderSessionList();
+  scheduleSessionListRender();
 });
 
 document.querySelectorAll(".chip[data-cmd]").forEach((chip) => {
