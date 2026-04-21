@@ -1,29 +1,21 @@
 # 核心 Workflow
 
-这个 skill 的核心任务不是“抓网页”，而是：
+这个 skill 的核心不是“抓网页”，而是用白名单站点完成一份可交付的 `.xlsx` claim chart。
 
-1. 确认一件**比亚迪有权的中文专利**
-2. 拉取并覆盖**全部权利要求**
-3. 将**每条权利要求中的全部技术特征**拆到可逐项核验的粒度
-4. 在**大为专利 + 汽车之家**的白名单内为每项特征寻找公开证据
-5. 输出固定 `.xlsx` claim chart
+## 目标
 
-## 一、任务目标
+最终结果必须回答：
 
-最终交付是一个 `.xlsx` 对比表，而不是一堆抓取结果。
-
-表里必须回答：
-
-- 这件专利是谁的，是否属于比亚迪有权中文专利
-- 分析了哪些权利要求
+- 目标专利是否属于比亚迪有权中文专利
+- 实际分析了哪些权利要求
 - 每条权利要求拆出了哪些技术特征
-- 每个技术特征在竞品上是否有公开证据
-- 证据链接是什么
-- 结论属于明确匹配、部分匹配、可能匹配、证据不足还是明显不匹配
+- 每项技术特征在竞品上是否有公开证据
+- 证据链接是否全部来自大为专利或汽车之家
+- 匹配判断属于 `明确匹配`、`部分匹配`、`可能匹配`、`证据不足` 或 `明显不匹配`
 
-## 二、推荐执行顺序
+## 推荐顺序
 
-### 1. 确认专利对象
+### 1. 确认分析对象
 
 先锁定：
 
@@ -32,9 +24,9 @@
 - 权利人/受让人是否与比亚迪相关
 - 需要分析的权利要求范围
 
-如果用户没限定，默认分析全部权利要求。
+如果用户没有限定，默认分析全部权利要求。
 
-### 2. 拉权利要求全文
+### 2. 拉取专利和权利要求
 
 从大为专利获取：
 
@@ -44,53 +36,47 @@
 注意：
 
 - 这一步只是拿原文，不等于完成分析
-- 权利要求不能只看主权项
+- 不要只看主权项
 - 从属权利要求也要覆盖
 
 ### 3. 拆解全部技术特征
 
-对每一条权利要求逐项拆解。
-
-拆解后的最小单位应该是“可以单独拿证据核验的一条技术点”，例如：
+按“可以单独拿证据核验的一条技术点”拆分。常见拆分维度包括：
 
 - 结构特征
-- 材料特征
-- 参数范围特征
-- 连接关系特征
-- 控制逻辑特征
-- 功能限定特征
+- 连接关系
+- 参数范围
+- 控制逻辑
+- 功能限定
+- 位置或材料限定
 
-禁止：
+不要：
 
-- 把一整条权利要求只写成一句总结
-- 只分析权利要求 1
+- 把整条权利要求压成一句总结
 - 只挑少量特征
+- 只分析权利要求 1
 
-### 4. 选竞品并收集证据
+### 4. 选竞品并找证据
 
-从汽车之家找候选车型或指定车型的公开信息。
-
-优先使用：
+从汽车之家收集：
 
 - 站内搜索结果
-- 车系页
-- 参数配置接口
-- 车型介绍页中明确可回链的内容
+- 文章或论坛详情页证据摘录
+- 车系页信息
+- 参数配置接口字段
 
-证据不够时直接写：
+如果证据不足，直接写：
 
 - `证据不足`
 - `无法确认`
 
-不要因为“看起来像”就判定匹配。
+### 5. 做技术特征映射
 
-### 5. 做特征映射
-
-每一行都应该是：
+每一行都应该只对应：
 
 - 一条权利要求中的一个技术特征
-- 对应一个竞品特征描述
-- 对应至少一个公开证据链接
+- 一个竞品对应特征描述
+- 至少一个白名单来源链接
 
 判断口径统一为：
 
@@ -102,7 +88,7 @@
 
 ### 6. 生成 `.xlsx`
 
-最终文件应基于模板输出，保留这些核心模块：
+最终文件应基于模板输出，并保留这些模块：
 
 - 报告标题
 - 专利/竞品基本信息
@@ -110,58 +96,145 @@
 - 结论统计区
 - 逐条权利要求技术特征对比主表
 
-## 三、脚本的定位
+## 脚本的定位
 
-本 skill 自带的脚本只是最小取数辅助：
+这两个脚本只负责最小取数：
 
 - `fetch_dawei_patent_claims.py`
-  作用：按公开号拉专利基本信息和全部中文权利要求，或按关键词检索“比亚迪中文有权专利”候选列表
+  用途：按公开号拉专利详情和中文权利要求，或按关键词检索“比亚迪中文有权专利”候选列表
 - `fetch_autohome_series_params.py`
-  作用：按 agent 显式给出的关键词，先做汽车之家站内搜索，再对命中的文章/论坛链接抓详情页正文，并对候选车系补抓车型页和参数接口中的公开字段
+  用途：按 agent 给出的关键词搜索汽车之家，并补抓文章详情、车系页和参数页
 
-使用这个脚本时：
+默认做法是直接按命令模板执行，不先阅读源码。
 
-1. agent 先阅读专利标题和全部权利要求
-2. agent 自己决定本次要检索的关键词
-3. 再把这些关键词显式传给汽车之家脚本
-4. 先看站内搜索返回的文章/视频/论坛/车系候选结果
-5. 优先使用脚本返回的 `detail.content_preview` 和 `detail.evidence_snippets`
-   其中 `detail.evidence_snippets` 是按段落匹配关键词、按内容去重后的候选证据摘录
-6. 再利用脚本自动补抓候选车系的参数页
-7. 不要把关键词逻辑预埋在脚本里
+只有在以下情况才需要读脚本：
 
-推荐命令模板：
+- 命令执行失败，需要定位报错
+- 站点接口、字段或认证方式发生变化
+- 需要修改脚本能力或输出格式
 
-```bash
-python3 workplace/runtime/skills/byd-patent-claim-chart-internal/scripts/fetch_dawei_patent_claims.py \
-  --keyword "<主题词>" \
-  --page-size 10 \
-  --output workplace/output/<session_id>/byd_patents.json
+不要把脚本输出直接当成最终分析结论。
+
+## 跨平台命令约定
+
+- 所有命令都用单行示例，避免 bash 续行语法
+- `<python_cmd>` 表示当前环境可用的 Python 命令
+- Windows 常见为 `python`
+- Linux 常见为 `python3` 或 `python`
+- 路径优先使用 repo 内相对路径
+
+## 命令模板
+
+按主题词搜索比亚迪中文有权专利：
+
+```text
+<python_cmd> workplace/runtime/skills/byd-patent-claim-chart-internal/scripts/fetch_dawei_patent_claims.py --keyword "<主题词>" --page-size 10 --output workplace/output/<session_id>/byd_patents.json
 ```
 
-```bash
-python3 workplace/runtime/skills/byd-patent-claim-chart-internal/scripts/fetch_dawei_patent_claims.py \
-  --pnm <专利号> \
-  --output workplace/output/<session_id>/<专利号>.json
+按公开号拉目标专利：
+
+```text
+<python_cmd> workplace/runtime/skills/byd-patent-claim-chart-internal/scripts/fetch_dawei_patent_claims.py --pnm <专利号> --output workplace/output/<session_id>/<专利号>.json
 ```
 
-```bash
-python3 workplace/runtime/skills/byd-patent-claim-chart-internal/scripts/fetch_autohome_series_params.py \
-  --keyword "<关键词1>" \
-  --keyword "<关键词2>" \
-  --max-results 8 \
-  --max-series 3 \
-  --output workplace/output/<session_id>/<竞品名>_autohome.json
+搜索汽车之家并补抓车系参数：
+
+```text
+<python_cmd> workplace/runtime/skills/byd-patent-claim-chart-internal/scripts/fetch_autohome_series_params.py --keyword "<关键词1>" --keyword "<关键词2>" --max-results 8 --max-series 3 --output workplace/output/<session_id>/<竞品名>_autohome.json
 ```
 
-它们都不能替代：
+如果用户已经给出 `series_id`，再加：
 
-- 权利要求拆解
-- 特征映射
-- 证据强弱判断
-- 最终 `.xlsx` 生成
+```text
+--series-id <series_id>
+```
 
-## 四、交付前检查
+如果只是调试，再加：
+
+```text
+--include-raw
+```
+
+## 脚本契约
+
+### `fetch_dawei_patent_claims.py`
+
+适用场景：
+
+- 已知专利号，需要拉专利详情和中文权利要求
+- 只知道技术主题，需要先筛“比亚迪中文有权专利”候选
+
+最少参数：
+
+- 详情模式：`--pnm <专利号>`
+- 检索模式：至少一个 `--keyword "<主题词>"`
+- 如需落盘：`--output <json_path>`
+
+默认行为：
+
+- `--keyword` 模式会自动强制加入 `CAS=(比亚迪)` 和 `CC=(CN)`
+- `--pnm` 模式返回单件专利详情
+- 有 `secrets.local.json` 时优先用该文件中的大为凭证，否则读取环境变量
+
+成功后优先读取这些字段：
+
+- 顶层：`mode`
+- 详情模式：`patent_no`、`title`、`claims_zh`、`main_claim`、`claim_count`、`ownership_check`
+- 检索模式：`result_count`、`patents`
+- 候选专利列表中的重点字段：`patent_no`、`title`、`abstract`、`is_byd_cn_owned`
+
+常见失败先排查：
+
+- 报 `缺少 DAWEISOFT_TOKEN 或 DAWEISOFT_DEVICE_ID`：凭证缺失
+- 报 `无法解析 ... secrets.local.json`：本地凭证文件格式错误
+- 报 `未找到 <专利号> 对应记录`：专利号错误、站点无记录或凭证无权限
+- 返回 `claims_zh` 为空：站点字段缺失或该记录没有可用中文权利要求，需人工复核
+
+### `fetch_autohome_series_params.py`
+
+适用场景：
+
+- 已经从专利标题和全部权利要求提炼出检索关键词
+- 需要从汽车之家收集候选车系、文章证据、车系页和参数页证据
+
+最少参数：
+
+- 至少一个 `--keyword "<关键词>"`
+- 如需限制范围，可加 `--series-id <id>`
+- 如需落盘：`--output <json_path>`
+
+可选但常用参数：
+
+- `--max-results <n>`
+- `--max-series <n>`
+- `--patent-json <dawei_json_path>`
+- `--topic-text "<主题描述>"`
+- `--include-raw`
+
+默认行为：
+
+- 先按每个关键词调用汽车之家搜索
+- 自动汇总 `candidate_series`
+- 再对命中的车系抓车系页和参数页
+- 如果文章或论坛结果可抓详情页，会补 `detail`
+
+成功后优先读取这些字段：
+
+- 顶层：`explicit_search_terms`、`selected_series_ids`
+- 搜索层：`search_queries`
+- 每个搜索结果里的重点字段：`candidate_series`、`results`
+- `results` 中优先看：`title`、`url`、`detail.content_preview`、`detail.evidence_snippets`
+- 车系证据层：`series_evidence`
+- `series_evidence` 中优先看：`series_name`、`brand_name`、`hot_spec_id`、`matched_param_fields`、`explicit_param_hits`、`source_links`
+
+常见失败先排查：
+
+- 报 `请先让 agent 生成关键词，再通过 --keyword 传入`：没有传关键词
+- 报 `未找到 __NEXT_DATA__`：汽车之家页面结构变化或返回异常页
+- `selected_series_ids` 为空：关键词无效、搜索未命中或候选车系抽取失败
+- `matched_param_fields` 为空：不代表该车系一定不相关，只表示当前关键词没有命中公开参数字段
+
+## 交付前检查
 
 交付前至少确认：
 
