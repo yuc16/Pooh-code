@@ -23,6 +23,13 @@ DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
 DEFAULT_ORIGINATOR = "pooh-code"
 DEFAULT_MODEL = "gpt-5.4"
 TRANSIENT_STATUS_CODES = {502, 503, 504}
+TRANSIENT_ERROR_TYPES = {
+    "server_error",
+    "internal_error",
+    "internal_server_error",
+    "overloaded_error",
+    "temporarily_unavailable",
+}
 FINISH_REASON_MAP = {
     "completed": "end_turn",
     "incomplete": "max_tokens",
@@ -423,7 +430,7 @@ def _consume_sse(
             finish_reason = response_obj.get("status") or "completed"
             usage = response_obj.get("usage")
         elif event_type in {"error", "response.failed"}:
-            raise RuntimeError("OpenAI Codex response failed.")
+            raise RuntimeError(_format_stream_error(event))
 
     return content, tool_calls, finish_reason, usage
 
@@ -652,6 +659,65 @@ def _friendly_error(status_code: int, raw: str) -> str:
     return f"HTTP {status_code}: {raw}"
 
 
+def _format_stream_error(event: dict[str, Any]) -> str:
+    response = event.get("response") if isinstance(event.get("response"), dict) else {}
+    status_details = response.get("status_details") if isinstance(response.get("status_details"), dict) else {}
+    raw_error = event.get("error")
+    error = raw_error if isinstance(raw_error, dict) else {}
+
+    nested_error = status_details.get("error")
+    if isinstance(nested_error, dict):
+        merged_error = dict(nested_error)
+        merged_error.update({k: v for k, v in error.items() if v not in (None, "", [])})
+        error = merged_error
+
+    err_type = str(
+        error.get("type")
+        or error.get("error_type")
+        or status_details.get("type")
+        or response.get("error_type")
+        or ""
+    ).strip()
+    err_code = str(
+        error.get("code")
+        or status_details.get("code")
+        or response.get("code")
+        or ""
+    ).strip()
+    err_message = str(
+        error.get("message")
+        or status_details.get("message")
+        or response.get("error")
+        or ""
+    ).strip()
+    response_status = str(response.get("status") or "").strip()
+
+    is_transient = (
+        err_type.lower() in TRANSIENT_ERROR_TYPES
+        or err_code in {str(code) for code in TRANSIENT_STATUS_CODES}
+        or response_status.lower() in {"failed", "errored"}
+        and any(marker in err_message.lower() for marker in ("temporarily unavailable", "overloaded", "internal error"))
+    )
+
+    details: list[str] = []
+    if err_type:
+        details.append(f"type={err_type}")
+    if err_code:
+        details.append(f"code={err_code}")
+    if response_status and response_status not in {"completed"}:
+        details.append(f"status={response_status}")
+    if err_message:
+        details.append(err_message)
+
+    if not details:
+        raw = json.dumps(event, ensure_ascii=False, default=str)
+        raw = raw[:400] + ("..." if len(raw) > 400 else "")
+        details.append(raw)
+
+    prefix = "OpenAI Codex upstream temporarily unavailable during streaming" if is_transient else "OpenAI Codex response failed"
+    return f"{prefix}: {'; '.join(details)}"
+
+
 def _is_transient_codex_error(exc: Exception) -> bool:
     if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.TransportError)):
         return True
@@ -663,6 +729,10 @@ def _is_transient_codex_error(exc: Exception) -> bool:
         "connection timeout",
         "temporarily unavailable",
         "server disconnected without sending a response",
+        "upstream temporarily unavailable during streaming",
+        "overloaded",
+        "internal_server_error",
+        "internal error",
     )
     return any(marker in message.lower() for marker in transient_markers)
 
