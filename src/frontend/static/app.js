@@ -19,6 +19,8 @@ const els = {
   btnRefresh: $("#btn-refresh"),
   btnAttach: $("#btn-attach"),
   btnImageMode: $("#btn-image-mode"),
+  aspectSelect: $("#image-aspect-ratio"),
+  aspectWrap: $("#image-aspect-wrap"),
   fileInput: $("#file-input"),
   filePreviewBar: $("#file-preview-bar"),
   sessionList: $("#session-list"),
@@ -315,9 +317,22 @@ function refreshComposerPlaceholder() {
     : "继续这段对话，或者拖拽文件到这里…";
 }
 
+const ASPECT_RATIO_OPTIONS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
+
+function syncAspectSelect() {
+  if (!els.aspectSelect) return;
+  const value = ASPECT_RATIO_OPTIONS.includes(state.imageAspectRatio)
+    ? state.imageAspectRatio
+    : "1:1";
+  if (els.aspectSelect.value !== value) els.aspectSelect.value = value;
+  state.imageAspectRatio = value;
+}
+
 function setImageMode(enabled) {
   state.imageMode = !!enabled;
   els.btnImageMode?.classList.toggle("active", state.imageMode);
+  els.aspectWrap?.classList.toggle("hidden", !state.imageMode);
+  syncAspectSelect();
   refreshDisplayedModel();
   refreshComposerPlaceholder();
 }
@@ -388,6 +403,7 @@ function applyState(payload) {
   if (payload.image_generation) {
     if (payload.image_generation.model) state.imageModel = payload.image_generation.model;
     if (payload.image_generation.default_aspect_ratio) state.imageAspectRatio = payload.image_generation.default_aspect_ratio;
+    syncAspectSelect();
   }
   if (payload.usage) {
     if (els.usageLabel) els.usageLabel.textContent = payload.usage.display || "—";
@@ -2732,6 +2748,12 @@ els.btnAttach?.addEventListener("click", () => els.fileInput.click());
 els.btnImageMode?.addEventListener("click", () => {
   setImageMode(!state.imageMode);
   els.input?.focus();
+});
+els.aspectSelect?.addEventListener("change", () => {
+  const value = els.aspectSelect.value;
+  if (ASPECT_RATIO_OPTIONS.includes(value)) {
+    state.imageAspectRatio = value;
+  }
 });
 els.fileInput?.addEventListener("change", () => {
   if (els.fileInput.files.length) {

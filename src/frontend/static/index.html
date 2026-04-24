@@ -170,11 +170,27 @@
               </svg>
               图片生成
             </button>
-            <button type="button" class="chip" data-cmd="/help">/help</button>
+            <label class="chip aspect-select hidden" id="image-aspect-wrap" title="图片比例">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.75"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+                <path d="M3 12h18"></path>
+              </svg>
+              <select id="image-aspect-ratio" aria-label="图片比例">
+                <option value="1:1">1:1</option>
+                <option value="2:3">2:3</option>
+                <option value="3:2">3:2</option>
+                <option value="3:4">3:4</option>
+                <option value="4:3">4:3</option>
+                <option value="4:5">4:5</option>
+                <option value="5:4">5:4</option>
+                <option value="9:16">9:16</option>
+                <option value="16:9">16:9</option>
+                <option value="21:9">21:9</option>
+              </select>
+            </label>
             <button type="button" class="chip" data-cmd="/tools">/tools</button>
             <button type="button" class="chip" data-cmd="/skills">/skills</button>
-            <button type="button" class="chip" data-cmd="/clear">/clear</button>
-            <button type="button" class="chip" data-cmd="/compact">/compact</button>
             <div class="spacer"></div>
             <span class="chip ghost" id="usage-label" title="上下文使用量">⌘↵ 发送</span>
             <button type="submit" class="send" id="btn-send" title="发送" aria-label="发送">
