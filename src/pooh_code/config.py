@@ -39,6 +39,7 @@ class ImageGenerationConfig:
     api_key: str = ""
     base_url: str = "https://aihubmix.com/v1"
     model: str = "gemini-3.1-flash-image-preview-free"
+    models: list[str] = field(default_factory=list)
     default_aspect_ratio: str = "1:1"
 
 
@@ -102,6 +103,29 @@ def _apply_env_from_settings(cfg: AgentConfig) -> None:
         os.environ["OPENAI_CODEX_REASONING_SUMMARY"] = cfg.reasoning.summary
 
 
+def _build_image_config(image: dict[str, Any]) -> ImageGenerationConfig:
+    default_model = "gemini-3.1-flash-image-preview-free"
+    model = image.get("model") or default_model
+    raw_models = image.get("models")
+    models: list[str] = []
+    if isinstance(raw_models, list):
+        for item in raw_models:
+            name = str(item or "").strip()
+            if name and name not in models:
+                models.append(name)
+    if model and model not in models:
+        models.insert(0, model)
+    if not models:
+        models = [model or default_model]
+    return ImageGenerationConfig(
+        api_key=image.get("api_key", "") or os.environ.get("AIHUBMIX_API_KEY", "") or "",
+        base_url=image.get("base_url", "https://aihubmix.com/v1") or "https://aihubmix.com/v1",
+        model=model,
+        models=models,
+        default_aspect_ratio=image.get("default_aspect_ratio", "1:1") or "1:1",
+    )
+
+
 def load_settings(path: Path | None = None) -> AgentConfig:
     ensure_settings_file()
     settings_path = path or DEFAULT_SETTINGS_PATH
@@ -138,12 +162,7 @@ def load_settings(path: Path | None = None) -> AgentConfig:
             brave_api_key=search.get("brave_api_key", "") or "",
             openalex_api_key=search.get("openalex_api_key", "") or "",
         ),
-        image=ImageGenerationConfig(
-            api_key=image.get("api_key", "") or os.environ.get("AIHUBMIX_API_KEY", "") or "",
-            base_url=image.get("base_url", "https://aihubmix.com/v1") or "https://aihubmix.com/v1",
-            model=image.get("model", "gemini-3.1-flash-image-preview-free") or "gemini-3.1-flash-image-preview-free",
-            default_aspect_ratio=image.get("default_aspect_ratio", "1:1") or "1:1",
-        ),
+        image=_build_image_config(image),
     )
     _apply_env_from_settings(cfg)
     return cfg

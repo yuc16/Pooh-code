@@ -506,6 +506,37 @@ input, textarea { font: inherit; color: inherit; }
   background: var(--accent);
   box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / 0.16);
 }
+.chat-head .model .model-switcher {
+  position: relative;
+  display: inline-flex; align-items: center;
+  margin-left: 2px;
+  padding: 0 2px;
+  border-left: 1px solid oklch(from var(--accent) l c h / 0.22);
+  color: var(--accent);
+  cursor: pointer;
+  line-height: 1;
+}
+.chat-head .model .model-switcher.hidden { display: none; }
+.chat-head .model .model-switcher svg {
+  pointer-events: none;
+  transition: transform .15s;
+}
+.chat-head .model .model-switcher:hover svg {
+  transform: translateY(1px);
+}
+.chat-head .model .model-switcher select {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  opacity: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+}
 .chat-head .model.err .pulse {
   background: var(--err);
   box-shadow: 0 0 0 3px oklch(from var(--err) l c h / 0.22);

@@ -577,6 +577,7 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
             "model": agent.config.model,
             "image_generation": {
                 "model": agent.config.image.model,
+                "models": list(agent.config.image.models or [agent.config.image.model]),
                 "default_aspect_ratio": agent.config.image.default_aspect_ratio,
                 "enabled": bool(agent.config.image.api_key),
             },
@@ -936,19 +937,25 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         if self.server.runs.is_running(session_id):
             raise ValueError("session is running; cancel it before generating an image")
 
+        requested_model = str(body.get("model", "")).strip() or None
+        allowed_models = set(agent.config.image.models or [agent.config.image.model])
+        if requested_model and requested_model not in allowed_models:
+            raise ValueError(f"不支持的图片模型: {requested_model}")
+        effective_model = requested_model or agent.config.image.model
         agent.sessions.append_message(
             session_key,
             "user",
             text,
             session_id=session_id,
             mode="image_generation",
-            model=agent.config.image.model,
+            model=effective_model,
         )
         result = generate_images(
             agent.config.image,
             prompt=text,
             session_id=session_id,
             aspect_ratio=str(body.get("aspect_ratio", "")).strip() or None,
+            model=requested_model,
         )
 
         assistant_content: list[dict[str, Any]] = []

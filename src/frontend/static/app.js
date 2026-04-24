@@ -21,6 +21,8 @@ const els = {
   btnImageMode: $("#btn-image-mode"),
   aspectSelect: $("#image-aspect-ratio"),
   aspectWrap: $("#image-aspect-wrap"),
+  imageModelSelect: $("#image-model"),
+  imageModelWrap: $("#model-switcher"),
   fileInput: $("#file-input"),
   filePreviewBar: $("#file-preview-bar"),
   sessionList: $("#session-list"),
@@ -159,6 +161,7 @@ let state = {
   selectionDragging: false,
   agentModel: "—",
   imageModel: "gemini-3.1-flash-image-preview-free",
+  imageModels: [],
   imageAspectRatio: "1:1",
   imageMode: false,
   imageGenerating: false,
@@ -328,11 +331,38 @@ function syncAspectSelect() {
   state.imageAspectRatio = value;
 }
 
+function rebuildImageModelOptions() {
+  if (!els.imageModelSelect) return;
+  const models = (state.imageModels || []).filter((name) => typeof name === "string" && name);
+  if (!models.length && state.imageModel) models.push(state.imageModel);
+  els.imageModelSelect.innerHTML = "";
+  for (const name of models) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    els.imageModelSelect.appendChild(opt);
+  }
+}
+
+function syncImageModelSelect() {
+  if (!els.imageModelSelect) return;
+  rebuildImageModelOptions();
+  const options = Array.from(els.imageModelSelect.options).map((opt) => opt.value);
+  const value = options.includes(state.imageModel) ? state.imageModel : options[0] || "";
+  if (value) {
+    if (els.imageModelSelect.value !== value) els.imageModelSelect.value = value;
+    state.imageModel = value;
+  }
+}
+
 function setImageMode(enabled) {
   state.imageMode = !!enabled;
   els.btnImageMode?.classList.toggle("active", state.imageMode);
   els.aspectWrap?.classList.toggle("hidden", !state.imageMode);
+  const modelsCount = (state.imageModels || []).filter(Boolean).length;
+  els.imageModelWrap?.classList.toggle("hidden", !state.imageMode || modelsCount < 2);
   syncAspectSelect();
+  syncImageModelSelect();
   refreshDisplayedModel();
   refreshComposerPlaceholder();
 }
@@ -401,9 +431,15 @@ function applyState(payload) {
     state.agentModel = payload.model;
   }
   if (payload.image_generation) {
+    if (Array.isArray(payload.image_generation.models)) {
+      state.imageModels = payload.image_generation.models.filter((name) => typeof name === "string" && name);
+    }
     if (payload.image_generation.model) state.imageModel = payload.image_generation.model;
     if (payload.image_generation.default_aspect_ratio) state.imageAspectRatio = payload.image_generation.default_aspect_ratio;
     syncAspectSelect();
+    syncImageModelSelect();
+    const modelsCount = (state.imageModels || []).filter(Boolean).length;
+    if (state.imageMode) els.imageModelWrap?.classList.toggle("hidden", modelsCount < 2);
   }
   if (payload.usage) {
     if (els.usageLabel) els.usageLabel.textContent = payload.usage.display || "—";
@@ -2333,6 +2369,7 @@ async function sendImageGeneration(text) {
         text,
         session_id: state.sessionId,
         aspect_ratio: state.imageAspectRatio,
+        model: state.imageModel,
       },
     });
     if (data.reply?.model) state.imageModel = data.reply.model;
@@ -2753,6 +2790,13 @@ els.aspectSelect?.addEventListener("change", () => {
   const value = els.aspectSelect.value;
   if (ASPECT_RATIO_OPTIONS.includes(value)) {
     state.imageAspectRatio = value;
+  }
+});
+els.imageModelSelect?.addEventListener("change", () => {
+  const value = els.imageModelSelect.value;
+  if (value && (state.imageModels || []).includes(value)) {
+    state.imageModel = value;
+    refreshDisplayedModel();
   }
 });
 els.fileInput?.addEventListener("change", () => {
