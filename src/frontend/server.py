@@ -36,7 +36,7 @@ from pooh_code.agent import PoohAgent  # noqa: E402
 from pooh_code.auth_db import AuthError, User, get_store  # noqa: E402
 from pooh_code.commands import COMMAND_CATALOG, TOOL_DESCRIPTION_MAP, CommandProcessor  # noqa: E402
 from pooh_code.config import load_settings  # noqa: E402
-from pooh_code.image_generation import generate_images  # noqa: E402
+from pooh_code.image_generation import generate_images, model_capabilities_payload  # noqa: E402
 from pooh_code.output_files import (  # noqa: E402
     delete_session_output_dir,
     OUTPUT_DIR,
@@ -246,6 +246,7 @@ def _extract_attachments(content: Any) -> list[dict[str, Any]]:
                     "media_type": media_type,
                     "size": int(block.get("size") or 0),
                     "url": _output_url(rel_path, inline=True),
+                    "path": rel_path,
                 }
             )
             continue
@@ -579,7 +580,10 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 "model": agent.config.image.model,
                 "models": list(agent.config.image.models or [agent.config.image.model]),
                 "default_aspect_ratio": agent.config.image.default_aspect_ratio,
+                "default_resolution": agent.config.image.default_resolution,
+                "capabilities": model_capabilities_payload(),
                 "enabled": bool(agent.config.image.api_key),
+                "apimart_enabled": bool(agent.config.image.apimart_api_key),
             },
             "context_window": agent.config.context_window,
             "running": self.server.runs.is_running(actual_session_id),
@@ -950,12 +954,18 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
             mode="image_generation",
             model=effective_model,
         )
+        ref_paths_raw = body.get("reference_image_paths") or []
+        if not isinstance(ref_paths_raw, list):
+            ref_paths_raw = []
+        ref_paths = [str(p).strip() for p in ref_paths_raw if str(p).strip()]
         result = generate_images(
             agent.config.image,
             prompt=text,
             session_id=session_id,
             aspect_ratio=str(body.get("aspect_ratio", "")).strip() or None,
             model=requested_model,
+            resolution=str(body.get("resolution", "")).strip() or None,
+            reference_image_paths=ref_paths or None,
         )
 
         assistant_content: list[dict[str, Any]] = []

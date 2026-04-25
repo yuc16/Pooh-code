@@ -23,6 +23,16 @@ const els = {
   aspectWrap: $("#image-aspect-wrap"),
   imageModelSelect: $("#image-model"),
   imageModelWrap: $("#model-switcher"),
+  resolutionSelect: $("#image-resolution"),
+  resolutionWrap: $("#image-resolution-wrap"),
+  referenceBar: $("#image-reference-bar"),
+  referenceName: $("#image-reference-name"),
+  referenceClear: $("#image-reference-clear"),
+  confirmDialog: $("#confirm-dialog"),
+  confirmDialogTitle: $("#confirm-dialog-title"),
+  confirmDialogBody: $("#confirm-dialog-body"),
+  confirmDialogOk: $("#confirm-dialog-ok"),
+  confirmDialogCancel: $("#confirm-dialog-cancel"),
   fileInput: $("#file-input"),
   filePreviewBar: $("#file-preview-bar"),
   sessionList: $("#session-list"),
@@ -162,6 +172,9 @@ let state = {
   agentModel: "—",
   imageModel: "gemini-3.1-flash-image-preview-free",
   imageModels: [],
+  imageCapabilities: {},
+  imageResolution: "1k",
+  imageReference: null,
   imageAspectRatio: "1:1",
   imageMode: false,
   imageGenerating: false,
@@ -320,15 +333,69 @@ function refreshComposerPlaceholder() {
     : "继续这段对话，或者拖拽文件到这里…";
 }
 
-const ASPECT_RATIO_OPTIONS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
+const FALLBACK_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
+
+function _currentCaps() {
+  const caps = state.imageCapabilities?.[state.imageModel];
+  return caps && typeof caps === "object" ? caps : null;
+}
+
+function _ratiosForCurrentModel() {
+  const caps = _currentCaps();
+  if (caps?.ratios?.length) return caps.ratios;
+  return FALLBACK_RATIOS;
+}
+
+function _resolutionsForCurrentModel() {
+  const caps = _currentCaps();
+  return Array.isArray(caps?.resolutions) ? caps.resolutions : [];
+}
+
+function _modelSupportsReference() {
+  return !!_currentCaps()?.supports_reference;
+}
+
+function rebuildAspectOptions() {
+  if (!els.aspectSelect) return;
+  const ratios = _ratiosForCurrentModel();
+  els.aspectSelect.innerHTML = "";
+  for (const ratio of ratios) {
+    const opt = document.createElement("option");
+    opt.value = ratio;
+    opt.textContent = ratio;
+    els.aspectSelect.appendChild(opt);
+  }
+}
 
 function syncAspectSelect() {
   if (!els.aspectSelect) return;
-  const value = ASPECT_RATIO_OPTIONS.includes(state.imageAspectRatio)
-    ? state.imageAspectRatio
-    : "1:1";
+  rebuildAspectOptions();
+  const ratios = _ratiosForCurrentModel();
+  let value = ratios.includes(state.imageAspectRatio) ? state.imageAspectRatio : ratios[0] || "1:1";
   if (els.aspectSelect.value !== value) els.aspectSelect.value = value;
   state.imageAspectRatio = value;
+}
+
+function rebuildResolutionOptions() {
+  if (!els.resolutionSelect) return;
+  const list = _resolutionsForCurrentModel();
+  els.resolutionSelect.innerHTML = "";
+  for (const r of list) {
+    const opt = document.createElement("option");
+    opt.value = r;
+    opt.textContent = r;
+    els.resolutionSelect.appendChild(opt);
+  }
+}
+
+function syncResolutionSelect() {
+  if (!els.resolutionSelect) return;
+  rebuildResolutionOptions();
+  const list = _resolutionsForCurrentModel();
+  if (!list.length) return;
+  const value = list.includes(state.imageResolution) ? state.imageResolution : list[0];
+  if (els.resolutionSelect.value !== value) els.resolutionSelect.value = value;
+  state.imageResolution = value;
 }
 
 function rebuildImageModelOptions() {
@@ -355,16 +422,115 @@ function syncImageModelSelect() {
   }
 }
 
+const IMAGE_PREF_PREFIX = "pooh.image.";
+
+function _imagePrefKey(sessionId) {
+  return sessionId ? `${IMAGE_PREF_PREFIX}${sessionId}` : null;
+}
+
+function loadSessionImagePrefs(sessionId) {
+  const key = _imagePrefKey(sessionId);
+  if (!key) return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSessionImagePrefs() {
+  const key = _imagePrefKey(state.sessionId);
+  if (!key) return;
+  const payload = {
+    model: state.imageModel || null,
+    aspect: state.imageAspectRatio || null,
+    resolution: state.imageResolution || null,
+    reference: state.imageReference || null,
+  };
+  try {
+    localStorage.setItem(key, JSON.stringify(payload));
+  } catch {
+    // localStorage 配额满或被禁用就静默跳过；下次还可以兜底用服务端默认
+  }
+}
+
+function clearImageReference() {
+  state.imageReference = null;
+  refreshReferenceBar();
+  saveSessionImagePrefs();
+}
+
+function openConfirmDialog({ title = "提示", body = [], confirmText = "确认", cancelText = "取消" } = {}) {
+  return new Promise((resolve) => {
+    if (!els.confirmDialog || !els.confirmDialogOk || !els.confirmDialogCancel) {
+      resolve(window.confirm(typeof body === "string" ? body : (Array.isArray(body) ? body.join("\n") : "")));
+      return;
+    }
+    if (els.confirmDialogTitle) els.confirmDialogTitle.textContent = title;
+    if (els.confirmDialogBody) {
+      els.confirmDialogBody.innerHTML = "";
+      const lines = Array.isArray(body) ? body : [String(body || "")];
+      for (const line of lines) {
+        if (!line) continue;
+        const p = document.createElement("p");
+        p.textContent = line;
+        els.confirmDialogBody.appendChild(p);
+      }
+    }
+    els.confirmDialogOk.textContent = confirmText;
+    els.confirmDialogCancel.textContent = cancelText;
+    els.confirmDialog.classList.remove("hidden");
+    els.confirmDialog.setAttribute("aria-hidden", "false");
+    const cleanup = () => {
+      els.confirmDialog.classList.add("hidden");
+      els.confirmDialog.setAttribute("aria-hidden", "true");
+      els.confirmDialogOk.removeEventListener("click", onOk);
+      els.confirmDialogCancel.removeEventListener("click", onCancel);
+      els.confirmDialog.removeEventListener("click", onBackdrop);
+      document.removeEventListener("keydown", onKey);
+    };
+    const onOk = () => { cleanup(); resolve(true); };
+    const onCancel = () => { cleanup(); resolve(false); };
+    const onBackdrop = (e) => { if (e.target === els.confirmDialog) onCancel(); };
+    const onKey = (e) => {
+      if (e.key === "Escape") onCancel();
+      else if (e.key === "Enter" && !e.isComposing) onOk();
+    };
+    els.confirmDialogOk.addEventListener("click", onOk);
+    els.confirmDialogCancel.addEventListener("click", onCancel);
+    els.confirmDialog.addEventListener("click", onBackdrop);
+    document.addEventListener("keydown", onKey);
+    setTimeout(() => els.confirmDialogOk?.focus(), 30);
+  });
+}
+
+function refreshReferenceBar() {
+  if (!els.referenceBar) return;
+  const ref = state.imageReference;
+  const visible = !!(state.imageMode && ref && _modelSupportsReference());
+  els.referenceBar.classList.toggle("hidden", !visible);
+  if (visible && els.referenceName) {
+    els.referenceName.textContent = ref.name || ref.path || "";
+  }
+}
+
 function setImageMode(enabled) {
   state.imageMode = !!enabled;
   els.btnImageMode?.classList.toggle("active", state.imageMode);
   els.aspectWrap?.classList.toggle("hidden", !state.imageMode);
   const modelsCount = (state.imageModels || []).filter(Boolean).length;
   els.imageModelWrap?.classList.toggle("hidden", !state.imageMode || modelsCount < 2);
+  const hasResolutions = _resolutionsForCurrentModel().length > 0;
+  els.resolutionWrap?.classList.toggle("hidden", !state.imageMode || !hasResolutions);
   syncAspectSelect();
   syncImageModelSelect();
+  syncResolutionSelect();
   refreshDisplayedModel();
   refreshComposerPlaceholder();
+  refreshReferenceBar();
 }
 
 function setBusy(busy, sessionId = state.sessionId) {
@@ -434,12 +600,34 @@ function applyState(payload) {
     if (Array.isArray(payload.image_generation.models)) {
       state.imageModels = payload.image_generation.models.filter((name) => typeof name === "string" && name);
     }
+    if (payload.image_generation.capabilities && typeof payload.image_generation.capabilities === "object") {
+      state.imageCapabilities = payload.image_generation.capabilities;
+    }
     if (payload.image_generation.model) state.imageModel = payload.image_generation.model;
     if (payload.image_generation.default_aspect_ratio) state.imageAspectRatio = payload.image_generation.default_aspect_ratio;
-    syncAspectSelect();
+    if (payload.image_generation.default_resolution) state.imageResolution = payload.image_generation.default_resolution;
+    // 如果当前 session 在本地有用户上次的图片偏好，优先用它覆盖服务端默认
+    const prefs = loadSessionImagePrefs(state.sessionId);
+    if (prefs) {
+      if (prefs.model && (state.imageModels || []).includes(prefs.model)) {
+        state.imageModel = prefs.model;
+      }
+      if (prefs.aspect) state.imageAspectRatio = prefs.aspect;
+      if (prefs.resolution) state.imageResolution = prefs.resolution;
+      if (prefs.reference && typeof prefs.reference === "object" && prefs.reference.path) {
+        state.imageReference = { path: prefs.reference.path, name: prefs.reference.name || "" };
+      }
+    }
     syncImageModelSelect();
+    syncAspectSelect();
+    syncResolutionSelect();
     const modelsCount = (state.imageModels || []).filter(Boolean).length;
-    if (state.imageMode) els.imageModelWrap?.classList.toggle("hidden", modelsCount < 2);
+    if (state.imageMode) {
+      els.imageModelWrap?.classList.toggle("hidden", modelsCount < 2);
+      const hasResolutions = _resolutionsForCurrentModel().length > 0;
+      els.resolutionWrap?.classList.toggle("hidden", !hasResolutions);
+    }
+    refreshReferenceBar();
   }
   if (payload.usage) {
     if (els.usageLabel) els.usageLabel.textContent = payload.usage.display || "—";
@@ -1147,10 +1335,15 @@ function renderMessageAttachments(shell, attachments = []) {
       card.href = attachment.url;
       card.target = "_blank";
       card.rel = "noreferrer";
+      const refPath = attachment.path || "";
+      const reuseBtn = state.imageMode && _modelSupportsReference() && refPath
+        ? `<button type="button" class="msg-attachment-reuse" data-ref-path="${escapeHtml(refPath)}" data-ref-name="${escapeHtml(name)}" title="基于此图继续修改" aria-label="基于此图继续修改"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>`
+        : "";
       card.innerHTML = `
         <div class="msg-attachment-media">
           <img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(name)}" loading="lazy" />
         </div>
+        ${reuseBtn}
         <div class="msg-attachment-caption">
           <span class="msg-attachment-badge">图片</span>
           <div class="msg-attachment-texts">
@@ -1159,7 +1352,22 @@ function renderMessageAttachments(shell, attachments = []) {
           </div>
         </div>
       `;
+      const reuse = card.querySelector(".msg-attachment-reuse");
+      if (reuse) {
+        reuse.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state.imageReference = {
+            path: reuse.dataset.refPath || "",
+            name: reuse.dataset.refName || "",
+          };
+          refreshReferenceBar();
+          saveSessionImagePrefs();
+          els.input?.focus();
+        });
+      }
       card.addEventListener("click", (e) => {
+        if (e.target.closest(".msg-attachment-reuse")) return;
         e.preventDefault();
         openImageLightbox({
           url: attachment.url,
@@ -2363,15 +2571,18 @@ async function sendImageGeneration(text) {
   updateRunningUI();
   agentStatus.set("busy", "开始图片生成", `${state.imageModel} 正在生成图片…`);
   try {
-    const data = await api("/api/image/generate", {
-      method: "POST",
-      body: {
-        text,
-        session_id: state.sessionId,
-        aspect_ratio: state.imageAspectRatio,
-        model: state.imageModel,
-      },
-    });
+    const refPaths = state.imageReference?.path && _modelSupportsReference()
+      ? [state.imageReference.path]
+      : [];
+    const body = {
+      text,
+      session_id: state.sessionId,
+      aspect_ratio: state.imageAspectRatio,
+      model: state.imageModel,
+    };
+    if (_resolutionsForCurrentModel().length) body.resolution = state.imageResolution;
+    if (refPaths.length) body.reference_image_paths = refPaths;
+    const data = await api("/api/image/generate", { method: "POST", body });
     if (data.reply?.model) state.imageModel = data.reply.model;
     applyState(data);
     appendMessage("assistant", data.reply?.text || "", {
@@ -2788,17 +2999,67 @@ els.btnImageMode?.addEventListener("click", () => {
 });
 els.aspectSelect?.addEventListener("change", () => {
   const value = els.aspectSelect.value;
-  if (ASPECT_RATIO_OPTIONS.includes(value)) {
+  if (_ratiosForCurrentModel().includes(value)) {
     state.imageAspectRatio = value;
+    saveSessionImagePrefs();
   }
 });
-els.imageModelSelect?.addEventListener("change", () => {
+els.imageModelSelect?.addEventListener("change", async () => {
   const value = els.imageModelSelect.value;
-  if (value && (state.imageModels || []).includes(value)) {
-    state.imageModel = value;
-    refreshDisplayedModel();
+  if (!value || !(state.imageModels || []).includes(value)) return;
+  const prev = state.imageModel;
+  state.imageModel = value;
+  if (!_modelSupportsReference()) state.imageReference = null;
+  syncAspectSelect();
+  syncResolutionSelect();
+  const hasResolutions = _resolutionsForCurrentModel().length > 0;
+  els.resolutionWrap?.classList.toggle("hidden", !state.imageMode || !hasResolutions);
+  refreshDisplayedModel();
+  refreshReferenceBar();
+  saveSessionImagePrefs();
+  const caps = state.imageCapabilities?.[value];
+  if (caps?.kind === "apimart" && prev !== value) {
+    const ok = await openConfirmDialog({
+      title: "切换到 " + value,
+      body: [
+        "该模型支持以上一张生成的图作为下一次的参考（图生图）。",
+        "建议新开一个会话单独管理这条修改链路，便于记忆。",
+      ],
+      confirmText: "新建会话",
+      cancelText: "继续在当前会话",
+    });
+    if (ok) {
+      try {
+        await newSession();
+        // 新会话后服务器返回的 image_generation.model 是配置默认值，
+        // 这里把用户刚选的模型还原回去，并刷新对应的下拉/能力 UI，
+        // 同时把这一组偏好持久化到新 session 的 localStorage 里，避免刷新又被打回默认
+        state.imageModel = value;
+        syncImageModelSelect();
+        syncAspectSelect();
+        syncResolutionSelect();
+        const ok2 = _resolutionsForCurrentModel().length > 0;
+        els.resolutionWrap?.classList.toggle("hidden", !state.imageMode || !ok2);
+        refreshDisplayedModel();
+        refreshReferenceBar();
+        saveSessionImagePrefs();
+      } catch (err) {
+        agentStatus.set("error", "新建会话失败", err.message);
+      }
+    }
   }
 });
+
+els.resolutionSelect?.addEventListener("change", () => {
+  const value = els.resolutionSelect.value;
+  if (!value) return;
+  if (_resolutionsForCurrentModel().includes(value)) {
+    state.imageResolution = value;
+    saveSessionImagePrefs();
+  }
+});
+
+els.referenceClear?.addEventListener("click", () => clearImageReference());
 els.fileInput?.addEventListener("change", () => {
   if (els.fileInput.files.length) {
     addFiles(Array.from(els.fileInput.files));

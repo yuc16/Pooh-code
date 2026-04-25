@@ -38,9 +38,12 @@ class SearchConfig:
 class ImageGenerationConfig:
     api_key: str = ""
     base_url: str = "https://aihubmix.com/v1"
+    apimart_api_key: str = ""
+    apimart_base_url: str = "https://api.apimart.ai/v1"
     model: str = "gemini-3.1-flash-image-preview-free"
     models: list[str] = field(default_factory=list)
     default_aspect_ratio: str = "1:1"
+    default_resolution: str = "1k"
 
 
 @dataclass
@@ -120,9 +123,12 @@ def _build_image_config(image: dict[str, Any]) -> ImageGenerationConfig:
     return ImageGenerationConfig(
         api_key=image.get("api_key", "") or os.environ.get("AIHUBMIX_API_KEY", "") or "",
         base_url=image.get("base_url", "https://aihubmix.com/v1") or "https://aihubmix.com/v1",
+        apimart_api_key=image.get("apimart_api_key", "") or os.environ.get("APIMART_API_KEY", "") or "",
+        apimart_base_url=image.get("apimart_base_url", "https://api.apimart.ai/v1") or "https://api.apimart.ai/v1",
         model=model,
         models=models,
         default_aspect_ratio=image.get("default_aspect_ratio", "1:1") or "1:1",
+        default_resolution=image.get("default_resolution", "1k") or "1k",
     )
 
 
