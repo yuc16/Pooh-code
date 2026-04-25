@@ -92,17 +92,17 @@ uv run pooh-code-login --check
 CLI prompt 会实时显示当前 `session_id` 和最近一次真实请求的 `total_tokens`，例如：
 
 ```text
-[352d15a7c67c 1019/400k] You >
+[352d15a7c67c 1019/258k] You >
 ```
 
-这里的 `400k` 是当前默认按 `gpt-5.4` 使用的上下文窗口。
+这里的 `258k` 是当前默认按 `gpt-5.4 / gpt-5.5` 实测可用的上下文窗口（超过会被上游直接 400 拒绝）。可用 `POOH_CONTEXT_WINDOW` 环境变量或 `settings.json` 的 `context_window` 字段覆盖。
 
 说明：
 
 - 左侧 `session_id` 是当前槽位正在使用的会话编号
 - token 数值来自 Codex API 返回的真实 `usage.total_tokens`
-- 新会话在第一次模型请求前没有真实值，因此会显示 `--/400k`
-- 如果你执行了 `/compact`、`/clear` 这类会改写会话的操作，终端会先回到 `--/400k`，等下一次真实模型请求完成后再显示新的真实值
+- 新会话在第一次模型请求前没有真实值，因此会显示 `--/258k`
+- 如果你执行了 `/compact`、`/clear` 这类会改写会话的操作，终端会先回到 `--/258k`，等下一次真实模型请求完成后再显示新的真实值
 - 这个数值是最近一轮真实 usage 的总量展示，不是严格意义上的输入上下文占用；输入、输出拆分请用 `/ctx` 查看
 
 内置命令：
@@ -293,7 +293,7 @@ Web 端走「邮箱 + 密码」账号体系，每个用户自己的 `session_key
   - **Office 文档** → python-docx / openpyxl / python-pptx 提取文本和表格
   - **CSV/TSV** → pandas 读取表格数据
   - **纯文本** → 直接读取
-- 当 `reply.compacted` 为真时，会插入一条 `[autocompact -> xxx/400k]` 系统气泡
+- 当 `reply.compacted` 为真时，会插入一条 `[autocompact -> xxx/258k]` 系统气泡
 - 产物归档现在直接内嵌到会话条目中：每个 `.convo` 行可展开显示该会话在 `workplace/output/<session_id>/` 下的所有文件（按类型图标着色：code / doc / image / table / chart），点击直接下载
 - Web 前端的每条请求都显式绑定到一个 `session_id`；因此可以让会话 A 在后台继续跑，同时切到会话 B 再发起另一条任务，两条任务互不串 transcript
 - 点击 `停止` 会调用 `/api/session/cancel` 给当前 `session_id` 发送取消信号；取消是 best-effort，会在上游 SSE/工具循环检测到后尽快结束
@@ -313,7 +313,7 @@ Web 端走「邮箱 + 密码」账号体系，每个用户自己的 `session_key
 | `tool_use_done` | 工具参数就绪，卡片里填充 `INPUT` JSON，状态切到 `执行中…` |
 | `tool_result` | 本地 `ToolRegistry.execute` 跑完，卡片里追加 `OUTPUT`，状态切到 `完成`；如果是错误输出会变红色并显示 `ERROR` + `失败` |
 | `turn_start` | 多轮 tool_use 时在两轮之间插入一条灰色 `· turn N ·` 分隔线 |
-| `compacted` | 触发了自动 compact，追加 `[autocompact -> xxx/400k]` 系统气泡 |
+| `compacted` | 触发了自动 compact，追加 `[autocompact -> xxx/258k]` 系统气泡 |
 | `truncated` | 跑满 `max_turns` 上限模型仍在要求工具调用，循环被强制截断；前端追加一条 `⚠️ 已达到 max_turns=N 上限...` 系统气泡，同时 `final_text` 末尾也会带上截断提示 |
 | `cancelled` | 当前会话收到了取消请求，前端追加“已请求取消”提示，等待服务端尽快收尾 |
 | `done` | 当前轮全部结束，前端置 `finished=true` 跳出 reader 循环 |

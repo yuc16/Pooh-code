@@ -9,18 +9,21 @@ from .openai_codex import PoohCodexClient
 
 import os as _os
 
-# gpt-5.4 标准上下文窗口为 272k，Codex 实验性最高可开到 1M。
-# 这里取 400k 作为默认值：既高于标准 272k 不会误报，又远低于 1M 仍能正常触发压缩。
+# gpt-5.4/5.5 实测可用上下文为 258k（超过会直接 400）。
+# 取 258k 作为默认值，并把所有 buffer 按这个窗口重新校准。
 # 可通过环境变量 POOH_CONTEXT_WINDOW 覆盖。
-CONTEXT_WINDOW_GPT_5_4 = int(_os.getenv("POOH_CONTEXT_WINDOW", "400000"))
-COMPACT_MAX_OUTPUT_TOKENS = 20_000
-AUTOCOMPACT_BUFFER_TOKENS = 20_000
-MANUAL_COMPACT_BUFFER_TOKENS = 5_000
+CONTEXT_WINDOW_GPT_5_4 = int(_os.getenv("POOH_CONTEXT_WINDOW", "258000"))
+# 压缩调用本身要预留的输出 token；窗口缩小后同步收紧
+COMPACT_MAX_OUTPUT_TOKENS = 12_000
+# 自动压缩缓冲：剩余小于该值时触发；窗口越小越要早压
+AUTOCOMPACT_BUFFER_TOKENS = 16_000
+# 手动 /compact 的硬上限缓冲
+MANUAL_COMPACT_BUFFER_TOKENS = 4_000
 
 # 压缩后保留的「最近消息」预算：占整个窗口的比例，
 # 从 messages 末尾开始累加，直到超过这个预算才停。
-# 参考 Claude Code：保留近期对话足够多到不丢失思路即可。
-RECENT_BUDGET_RATIO = 0.30
+# 窗口缩小后比例略降，保证压缩后仍有充足空间继续对话。
+RECENT_BUDGET_RATIO = 0.25
 RECENT_MIN_MESSAGES = 4
 RECENT_MAX_MESSAGES = 30
 # 历史摘要前缀，用于识别"已存在的旧摘要"以便递归压缩
@@ -96,6 +99,55 @@ def format_token_count(tokens: int) -> str:
             return f"{value:.0f}k"
         return f"{value:.1f}k"
     return str(tokens)
+
+
+def _sanitize_tool_pairs(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """剔除消息列表中孤立的 tool_use / tool_result。
+
+    Codex 协议要求 function_call 与 function_call_output 必须成对出现。
+    上下文压缩按 token 预算切分时，可能把 tool_use 划入"待摘要"段而把
+    tool_result 留在 recent 段（反之亦然），下游会以 HTTP 400
+    "No tool call found for function call output" 拒绝。
+    """
+    use_ids: set[str] = set()
+    result_ids: set[str] = set()
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type")
+            if btype == "tool_use":
+                tid = block.get("id")
+                if tid:
+                    use_ids.add(tid)
+            elif btype == "tool_result":
+                tid = block.get("tool_use_id")
+                if tid:
+                    result_ids.add(tid)
+    valid = use_ids & result_ids
+
+    cleaned: list[dict[str, Any]] = []
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            cleaned.append(msg)
+            continue
+        new_blocks: list[Any] = []
+        for block in content:
+            if isinstance(block, dict):
+                btype = block.get("type")
+                if btype == "tool_use" and block.get("id") not in valid:
+                    continue
+                if btype == "tool_result" and block.get("tool_use_id") not in valid:
+                    continue
+            new_blocks.append(block)
+        if not new_blocks:
+            continue
+        cleaned.append({**msg, "content": new_blocks})
+    return cleaned
 
 
 def render_transcript(messages: list[dict[str, Any]]) -> str:
@@ -254,8 +306,8 @@ class ContextManager:
                 # 只有旧摘要没新增 old → 不需要再压缩
                 return messages
 
-        # 压缩请求自身的安全上限
-        while old_messages and estimate_tokens_for_messages(old_messages) > 160_000:
+        # 压缩请求自身的安全上限：必须留给 compact_system+输出+少量结构 ~70k 余量
+        while old_messages and estimate_tokens_for_messages(old_messages) > 180_000:
             drop = max(1, len(old_messages) // 10)
             old_messages = old_messages[drop:]
 
@@ -310,4 +362,7 @@ class ContextManager:
             and recent_messages[0]["content"].startswith(SUMMARY_PREFIX)
         ):
             recent_messages = recent_messages[1:]
+        # 关键：剔除 recent 段中"另一半被摘要掉"的孤儿 tool_use / tool_result。
+        # 否则下游 Codex 会因为 function_call_output 找不到 function_call 直接 400。
+        recent_messages = _sanitize_tool_pairs(recent_messages)
         return [summary_message, *recent_messages]
