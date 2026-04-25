@@ -149,7 +149,7 @@ const agentStatus = (() => {
   }
 
   render();
-  return { set, reset, markActivity };
+  return { set, reset, markActivity, level: () => level };
 })();
 
 let state = {
@@ -562,6 +562,15 @@ function updateRunningUI() {
   refreshComposerPlaceholder();
   if (state.imageGenerating || currentBusy) {
     setStatusPulse("busy");
+    // 冷加载（页面刷新后没有活的 SSE 接管）时 agentStatus 仍是 idle，
+    // 这里兜底把 banner 升级到"后台运行中"，避免和侧栏「运行中」打架。
+    if (currentBusy && agentStatus && agentStatus.level() === "idle") {
+      agentStatus.set(
+        "busy",
+        "会话运行中",
+        "Agent 正在后台执行（页面已刷新，无实时进度推送，可点击停止）",
+      );
+    }
   } else if (state.runningSessions.size > 0) {
     setStatusPulse("busy");
   } else {
@@ -591,6 +600,17 @@ function applyState(payload) {
   }
   if (typeof payload.running === "boolean" && payload.session_id) {
     setSessionRunning(payload.session_id, payload.running);
+  }
+  // 当 payload 里带回完整 sessions 列表（/api/sessions 等），用服务端的
+  // `running` 真相重置本地 runningSessions —— 否则页面刷新后 Set 永远为空，
+  // 顶部状态栏会错误地停在"就绪 / 等待你的指令"，即便侧栏明明在跑。
+  if (Array.isArray(payload.sessions)) {
+    const fresh = new Set();
+    for (const item of payload.sessions) {
+      if (item && item.session_id && item.running) fresh.add(item.session_id);
+    }
+    state.runningSessions = fresh;
+    updateRunningUI();
   }
   if (payload.session_key) state.sessionKey = payload.session_key;
   if (payload.model) {
