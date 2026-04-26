@@ -2436,6 +2436,15 @@ async function streamChat(text, files = []) {
           ensureCursor(bubble);
         }
         break;
+      case "compacting":
+        if (canRenderStream()) {
+          agentStatus.set(
+            "busy",
+            "上下文压缩中",
+            `Agent 正在调用模型摘要历史（${evt.display || "--"}），这一步可能需要 30s 以上`,
+          );
+        }
+        break;
       case "compacted":
         if (canRenderStream()) {
           agentStatus.set("busy", "上下文已压缩", `autocompact → ${evt.display || ""}`);
@@ -2443,6 +2452,21 @@ async function streamChat(text, files = []) {
         if (state.sessionId === launchedSessionId) {
           appendMessage("system", `[autocompact -> ${evt.display || ""}]`);
         }
+        break;
+      case "retrying":
+        if (canRenderStream()) {
+          const attempt = evt.attempt || 1;
+          const max = evt.max_attempts || 3;
+          const wait = evt.next_delay_seconds || 1;
+          agentStatus.set(
+            "busy",
+            `上游超时，重试 ${attempt}/${max}`,
+            `${wait}s 后再次尝试 · ${(evt.error || "").slice(0, 80)}`,
+          );
+        }
+        break;
+      case "ping":
+        // SSE 心跳，仅用于保活和让 agentStatus 计时刷新；无需渲染。
         break;
       case "truncated":
         agentStatus.set("error", "已截断", `已达到 max_turns=${evt.max_turns} 上限`);

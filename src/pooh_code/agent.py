@@ -194,7 +194,12 @@ class PoohAgent:
         user_text_for_prompt: str = "",
         force: bool = False,
         session_id: str | None = None,
+        on_event: Any | None = None,
     ) -> bool:
+        """同步压缩。`on_event(kind, payload)` 可选；如果传入，则在真正进入
+        摘要 LLM 调用之前发 `compacting`，结束后无论是否产生新摘要都不会
+        再额外发，由调用方根据返回值决定是否发 `compacted`。这样前端在
+        长上下文压缩期间就有「上下文压缩中…」可以显示，而不是死寂。"""
         self.context.model = self.config.model
         self.context.context_window = self.config.context_window
         messages = self.sessions.load_messages(session_key, session_id=session_id)
@@ -206,6 +211,18 @@ class PoohAgent:
             messages, system_prompt, real_total_tokens=real_tokens
         ):
             return False
+        if on_event is not None:
+            try:
+                usage = self.context.usage_from_real_tokens(real_tokens) if real_tokens else self.context.usage(messages, system_prompt)
+                on_event(
+                    "compacting",
+                    {
+                        "reason": "force" if force else "auto",
+                        "display": usage.display,
+                    },
+                )
+            except Exception:
+                pass
         compacted = self.context.compact_messages(messages, system_prompt)
         if compacted == messages:
             return False
@@ -365,6 +382,7 @@ class PoohAgent:
                 user_text_for_prompt=user_text,
                 force=False,
                 session_id=actual_session_id,
+                on_event=_emit,
             )
             if compacted:
                 _emit(
@@ -390,6 +408,7 @@ class PoohAgent:
                         user_text_for_prompt=user_text,
                         force=True,
                         session_id=actual_session_id,
+                        on_event=_emit,
                     )
                     messages = self.sessions.load_messages(session_key, session_id=actual_session_id)
                     _emit(

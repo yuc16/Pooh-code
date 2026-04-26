@@ -66,6 +66,14 @@ class _MessagesAPI:
     def __init__(self, client: "PoohCodexClient"):
         self._client = client
 
+    def _client_timeout(self) -> httpx.Timeout:
+        return httpx.Timeout(
+            connect=self._client.connect_timeout,
+            read=self._client.read_timeout,
+            write=self._client.write_timeout,
+            pool=self._client.connect_timeout,
+        )
+
     def create(
         self,
         *,
@@ -109,7 +117,7 @@ class _MessagesAPI:
                 url=self._client.base_url,
                 headers=headers,
                 body=body,
-                timeout_seconds=self._client.timeout_seconds,
+                timeout=self._client_timeout(),
                 verify_ssl=self._client.verify_ssl,
                 on_event=on_event,
                 cancel_event=cancel_event,
@@ -132,7 +140,7 @@ class _MessagesAPI:
                 url=self._client.base_url,
                 headers=headers,
                 body=body,
-                timeout_seconds=self._client.timeout_seconds,
+                timeout=self._client_timeout(),
                 verify_ssl=self._client.verify_ssl,
                 on_event=on_event,
                 cancel_event=cancel_event,
@@ -162,7 +170,14 @@ class PoohCodexClient:
         self.base_url = _resolve_codex_url(base_url)
         self.originator = os.getenv("OPENAI_CODEX_ORIGINATOR", DEFAULT_ORIGINATOR)
         self.verify_ssl = _env_bool("OPENAI_CODEX_VERIFY_SSL", True)
-        self.timeout_seconds = float(os.getenv("OPENAI_CODEX_TIMEOUT", "60"))
+        # read 阶段允许长上下文首字节耗时（230k+ 输入 TTFT 经常 >60s）；
+        # connect/write/pool 保持小值，避免连接异常被一次大 read 遮蔽。
+        # OPENAI_CODEX_TIMEOUT 仍可单值覆盖（向后兼容），并作为 read 的默认值；
+        # 也可分别用 OPENAI_CODEX_READ_TIMEOUT / _CONNECT_TIMEOUT / _WRITE_TIMEOUT 拆分。
+        self.timeout_seconds = float(os.getenv("OPENAI_CODEX_TIMEOUT", "600"))
+        self.connect_timeout = float(os.getenv("OPENAI_CODEX_CONNECT_TIMEOUT", "30"))
+        self.read_timeout = float(os.getenv("OPENAI_CODEX_READ_TIMEOUT", str(self.timeout_seconds)))
+        self.write_timeout = float(os.getenv("OPENAI_CODEX_WRITE_TIMEOUT", "30"))
         self.messages = _MessagesAPI(self)
 
 
@@ -253,7 +268,7 @@ def _request_codex(
     url: str,
     headers: dict[str, str],
     body: dict[str, Any],
-    timeout_seconds: float,
+    timeout: "httpx.Timeout | float",
     verify_ssl: bool,
     on_event: Any = None,
     cancel_event: threading.Event | None = None,
@@ -267,7 +282,7 @@ def _request_codex(
                 url=url,
                 headers=headers,
                 body=body,
-                timeout_seconds=timeout_seconds,
+                timeout=timeout,
                 verify_ssl=current_verify_ssl,
                 on_event=on_event,
                 cancel_event=cancel_event,
@@ -280,6 +295,21 @@ def _request_codex(
                 continue
             if attempt >= attempts or not _is_transient_codex_error(exc):
                 raise
+            # 把重试事件透传给上游（agent → SSE → 前端），避免长上下文
+            # 失败后用户面对的是几十秒的死寂。
+            if on_event is not None:
+                try:
+                    on_event(
+                        "retrying",
+                        {
+                            "attempt": attempt,
+                            "max_attempts": attempts,
+                            "next_delay_seconds": attempt,
+                            "error": message,
+                        },
+                    )
+                except Exception:
+                    pass
             time.sleep(attempt)
     if last_exc is not None:
         raise last_exc
@@ -291,12 +321,12 @@ def _request_codex_once(
     url: str,
     headers: dict[str, str],
     body: dict[str, Any],
-    timeout_seconds: float,
+    timeout: "httpx.Timeout | float",
     verify_ssl: bool,
     on_event: Any = None,
     cancel_event: threading.Event | None = None,
 ) -> tuple[str, list[dict[str, Any]], str, dict[str, Any] | None]:
-    with httpx.Client(timeout=timeout_seconds, verify=verify_ssl) as client:
+    with httpx.Client(timeout=timeout, verify=verify_ssl) as client:
         with client.stream("POST", url, headers=headers, json=body) as response:
             if response.status_code != 200:
                 raw = response.read().decode("utf-8", "ignore")

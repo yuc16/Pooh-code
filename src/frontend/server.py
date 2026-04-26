@@ -54,6 +54,9 @@ SSE_TEXT_BATCH_WINDOW = 0.06
 SSE_TEXT_BATCH_CHARS = 160
 SSE_REASONING_BATCH_WINDOW = 0.12
 SSE_REASONING_BATCH_CHARS = 320
+# 服务端 SSE 心跳间隔（秒）：在 agent 同步阻塞（compact / 模型 TTFT / 工具执行）期间
+# 给客户端推注释帧，既保活 TCP，也让前端 reader 不会因长时间无字节而看起来卡死。
+SSE_HEARTBEAT_INTERVAL = 10.0
 AUTH_EXEMPT_PATHS = {
     "/", "/index.html", "/login", "/login.html",
     "/api/auth/login", "/api/auth/register", "/api/auth/me", "/api/auth/logout",
@@ -805,6 +808,20 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
             "text_started_at": 0.0,
             "reasoning_started_at": 0.0,
         }
+        # 心跳线程和正常事件可能并发写 wfile，必须串行化。
+        write_lock = threading.Lock()
+
+        def _write_raw(payload_bytes: bytes) -> bool:
+            with write_lock:
+                if closed["v"]:
+                    return False
+                try:
+                    self.wfile.write(payload_bytes)
+                    self.wfile.flush()
+                    return True
+                except (BrokenPipeError, ConnectionResetError):
+                    closed["v"] = True
+                    return False
 
         def _write_sse(event_type: str, payload: dict[str, Any]) -> None:
             if closed["v"]:
@@ -814,11 +831,22 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
                 ensure_ascii=False,
                 default=str,
             )
-            try:
-                self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                closed["v"] = True
+            _write_raw(f"data: {data}\n\n".encode("utf-8"))
+
+        heartbeat_stop = threading.Event()
+
+        def _heartbeat_loop() -> None:
+            # SSE 注释帧（以 ":" 开头）：协议规定客户端必须忽略，但 TCP 字节
+            # 仍会流过，从而：(a) 让前端 fetch reader 周期性 wake；
+            # (b) 防止上游网关把"几十秒沉默"误判为半开连接超时关闭。
+            while not heartbeat_stop.wait(SSE_HEARTBEAT_INTERVAL):
+                if not _write_raw(f": ping {int(time.monotonic())}\n\n".encode("ascii")):
+                    return
+
+        heartbeat_thread = threading.Thread(
+            target=_heartbeat_loop, name="sse-heartbeat", daemon=True
+        )
+        heartbeat_thread.start()
 
         def _flush_text_delta() -> None:
             text_buf = pending["text_delta"]
@@ -896,15 +924,12 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
             _flush_pending()
             _write_sse("error", {"error": str(exc)})
         finally:
+            heartbeat_stop.set()
             self.server.runs.finish(run)
 
         if not closed["v"]:
-            try:
-                _flush_pending()
-                self.wfile.write(b"data: [DONE]\n\n")
-                self.wfile.flush()
-            except Exception:
-                pass
+            _flush_pending()
+            _write_raw(b"data: [DONE]\n\n")
 
     def _handle_command(self) -> None:
         body = self._read_json_body()

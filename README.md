@@ -313,12 +313,18 @@ Web 端走「邮箱 + 密码」账号体系，每个用户自己的 `session_key
 | `tool_use_done` | 工具参数就绪，卡片里填充 `INPUT` JSON，状态切到 `执行中…` |
 | `tool_result` | 本地 `ToolRegistry.execute` 跑完，卡片里追加 `OUTPUT`，状态切到 `完成`；如果是错误输出会变红色并显示 `ERROR` + `失败` |
 | `turn_start` | 多轮 tool_use 时在两轮之间插入一条灰色 `· turn N ·` 分隔线 |
-| `compacted` | 触发了自动 compact，追加 `[autocompact -> xxx/258k]` 系统气泡 |
+| `compacting` | 即将进入压缩 LLM 调用前发出，前端 banner 切到「上下文压缩中」，避免长上下文下的几十秒死寂 |
+| `compacted` | 压缩完成，追加 `[autocompact -> xxx/258k]` 系统气泡 |
+| `retrying` | 上游 Codex 请求因超时/网络错误进入重试时透传，前端 banner 显示「上游超时，重试 N/M」 |
 | `truncated` | 跑满 `max_turns` 上限模型仍在要求工具调用，循环被强制截断；前端追加一条 `⚠️ 已达到 max_turns=N 上限...` 系统气泡，同时 `final_text` 末尾也会带上截断提示 |
 | `cancelled` | 当前会话收到了取消请求，前端追加“已请求取消”提示，等待服务端尽快收尾 |
 | `done` | 当前轮全部结束，前端置 `finished=true` 跳出 reader 循环 |
 | `state` | 最后一帧带上新的 `session_id` / `usage`，用来同步右上角 |
 | `error` | 任意异常，前端置错误状态并写系统气泡 |
+
+服务端每 ~10 秒会推一个 SSE 注释帧（`: ping <ts>\n\n`）作为心跳，客户端按协议忽略，但用来：(a) 保活 TCP；(b) 让前端 `fetch` reader 在 agent 长时间同步阻塞（compact 调用、模型 TTFT、长工具执行）期间也能感知连接还活着，避免误判"卡死"。
+
+Codex 客户端的 httpx 超时已按阶段拆分：`connect` / `write` / `pool` 默认 30s，`read` 默认 600s（环境变量 `OPENAI_CODEX_READ_TIMEOUT` 可覆盖；老的 `OPENAI_CODEX_TIMEOUT` 仍生效，作为 read 默认值）。这是因为长上下文（>200k）模型首字节经常超过 60s，旧的 60s 单值会触发 ReadTimeout 进入重试，导致前端长时间无事件可见。
 
 tool-block 卡片的 `INPUT` / `OUTPUT` 都是可折叠的代码块，点击卡片头即可收起，方便长工具输出不挤占视线。如果上游没有发参数增量（例如某些 `write_file` 调用），前端会先按工具 `input_schema` 渲染一个参数骨架，避免长时间整块空白。
 
