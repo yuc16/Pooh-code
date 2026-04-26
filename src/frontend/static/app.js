@@ -2695,23 +2695,33 @@ async function sendMessage(text) {
         body: { text: composed, session_id: launchedSessionId },
       });
       data.session_id = data.session_id || launchedSessionId;
-      applyState(data);
-      await refreshMessages();
-      appendMessage("system", `> ${composed}`);
-      if (data.text && data.text !== "__EXIT__") {
-        appendMessage("system", data.text);
+      // /api/command 是同步阻塞（/compact 可能 30s+），期间用户可能已经切到
+      // 别的会话了。返回后只能更新原会话的视图——不能 applyState(data) 把
+      // state.sessionId 改回 launched 那个，否则用户会被强制拽回原会话，
+      // 给人"新会话变成了原会话"的错觉，并丢失刚切过去的会话视图。
+      const stillOnOriginating = state.sessionId === launchedSessionId;
+      if (stillOnOriginating) {
+        applyState(data);
+        await refreshMessages();
+        appendMessage("system", `> ${composed}`);
+        if (data.text && data.text !== "__EXIT__") {
+          appendMessage("system", data.text);
+        }
+        agentStatus.set("idle", "命令完成", `${composed} 已执行`);
       }
+      // 不论用户在不在原会话，都刷新侧栏（usage / running 标签需要更新）。
       await Promise.all([refreshSessions(), refreshFiles()]);
-      agentStatus.set("idle", "命令完成", `${composed} 已执行`);
     } catch (err) {
       const msg = err.message || "unknown";
       const isRunning = /session is running|running/i.test(msg);
-      appendMessage("system", `命令错误: ${msg}`);
-      agentStatus.set(
-        "error",
-        isRunning ? `无法执行 ${composed}` : `命令失败`,
-        isRunning ? "当前会话仍在运行中。请先点击「停止」或等待本轮完成后再执行命令。" : msg,
-      );
+      if (state.sessionId === launchedSessionId) {
+        appendMessage("system", `命令错误: ${msg}`);
+        agentStatus.set(
+          "error",
+          isRunning ? `无法执行 ${composed}` : `命令失败`,
+          isRunning ? "当前会话仍在运行中。请先点击「停止」或等待本轮完成后再执行命令。" : msg,
+        );
+      }
     } finally {
       setBusy(false, launchedSessionId);
     }
