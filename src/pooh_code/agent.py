@@ -168,12 +168,19 @@ class PoohAgent:
         self.context.context_window = self.config.context_window
         if not pending_user_text:
             usage = self.sessions.get_last_usage(session_key, session_id=session_id)
-            real_total_tokens = None
+            real_total_tokens: int | None = None
             if isinstance(usage, dict):
                 raw = usage.get("total_tokens")
-                if isinstance(raw, int):
+                if isinstance(raw, int) and raw > 0:
                     real_total_tokens = raw
-            return self.context.usage_from_real_tokens(real_total_tokens)
+            if real_total_tokens is not None:
+                return self.context.usage_from_real_tokens(real_total_tokens)
+            # 没有真实 usage（新会话 / 刚 compact / 刚 clear）时回退到 message
+            # 估算，避免前端显示成 `0/258k` 或 `--/258k`。估算偏保守，但比 0 真。
+            messages = self.sessions.load_messages(session_key, session_id=session_id)
+            if not messages:
+                return self.context.usage_from_real_tokens(None)
+            return self.context.usage(messages, self.build_system_prompt(user_text_for_prompt))
         messages = self.sessions.load_messages(session_key, session_id=session_id)
         if pending_user_text:
             messages = [*messages, {"role": "user", "content": pending_user_text}]

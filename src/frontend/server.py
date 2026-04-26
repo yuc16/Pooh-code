@@ -940,11 +940,19 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
             raise ValueError("command must start with /")
         session_key = self._session_key()
         session_id = self._session_id_from_body(body, session_key)
-        if self.server.runs.is_running(session_id):
+        # 用 runs.start() 原子注册而不是先 is_running 再处理：
+        # (a) 修复 TOCTOU；(b) 像 /compact 这种慢命令在跑时 is_running 应返回 True，
+        # 否则前端切走再切回来会以为命令"取消"了——其实命令仍在后台同步执行。
+        try:
+            run = self.server.runs.start(session_id)
+        except ValueError:
             raise ValueError("session is running; cancel it before executing commands")
-        # CommandProcessor is still slot-oriented; keep web active session in sync for commands.
-        self.server.agent.sessions.switch_session(session_id, session_key=session_key)
-        result = self.server.commands.handle(text, session_key)
+        try:
+            # CommandProcessor is still slot-oriented; keep web active session in sync for commands.
+            self.server.agent.sessions.switch_session(session_id, session_key=session_key)
+            result = self.server.commands.handle(text, session_key)
+        finally:
+            self.server.runs.finish(run)
         self._send_json(
             {
                 "ok": True,

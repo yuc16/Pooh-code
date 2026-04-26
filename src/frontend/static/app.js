@@ -1929,8 +1929,12 @@ function renderSessionList() {
     const label = item.label || item.session_id;
     const relTime = _relTime(item.last_active);
     const usage = item.usage || null;
-    const usageTokens = Number(usage?.tokens);
-    const usageLimit = Number(usage?.limit);
+    // 注意：Number(null/undefined) === 0，不能直接用 Number 后再 isFinite，
+    // 否则后端给的 tokens=null（如刚 compact 后）会被错显成 `0/258k`。
+    const rawTokens = usage?.tokens;
+    const rawLimit = usage?.limit;
+    const usageTokens = rawTokens == null ? NaN : Number(rawTokens);
+    const usageLimit = rawLimit == null ? NaN : Number(rawLimit);
     const hasUsageLimit = Number.isFinite(usageLimit) && usageLimit > 0;
     const hasUsageTokens = Number.isFinite(usageTokens) && usageTokens >= 0;
     const usageRatio = hasUsageLimit && hasUsageTokens ? usageTokens / usageLimit : 0;
