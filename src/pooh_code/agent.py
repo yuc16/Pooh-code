@@ -209,6 +209,12 @@ class PoohAgent:
         长上下文压缩期间就有「上下文压缩中…」可以显示，而不是死寂。"""
         self.context.model = self.config.model
         self.context.context_window = self.config.context_window
+        # CRITICAL: 在压缩开始前 pin 一个具体的 session_id，避免长压缩期间
+        # 别的线程 switch_session 把 slot.active_session_id 改掉。否则后面
+        # replace_messages(session_id=None) 会落到当时的 active 而不是被压
+        # 缩的那个会话——结果就是 A 的摘要被写进 B 的 transcript。
+        if session_id is None:
+            session_id = self.sessions.get_session_id(session_key)
         messages = self.sessions.load_messages(session_key, session_id=session_id)
         if not messages:
             return False

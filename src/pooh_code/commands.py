@@ -97,7 +97,15 @@ class CommandProcessor:
             "</div>" + "".join(body_rows) + "</div>" + note_html + "</div>"
         )
 
-    def handle(self, raw: str, session_key: str) -> CommandResult:
+    def handle(
+        self,
+        raw: str,
+        session_key: str,
+        session_id: str | None = None,
+    ) -> CommandResult:
+        """`session_id` 是 web 端绑定的具体会话；如果传入，/compact /clear /ctx
+        都会显式指向这个会话。CLI 不传时各 handler 会回落到 slot.active。这样
+        web 端就不会因为压缩期间用户切换会话而把摘要写错地方。"""
         if not raw.startswith("/"):
             return CommandResult(False)
         parts = raw.strip().split(maxsplit=1)
@@ -137,8 +145,8 @@ class CommandProcessor:
                 ),
             )
         if command == "/clear":
-            session_id = self.agent.sessions.clear_session(session_key)
-            return CommandResult(True, f"cleared session_id={session_id}")
+            cleared_id = self.agent.sessions.clear_session(session_key, session_id=session_id)
+            return CommandResult(True, f"cleared session_id={cleared_id}")
         if command == "/new":
             session_id = self.agent.sessions.new_session(session_key)
             return CommandResult(
@@ -159,21 +167,23 @@ class CommandProcessor:
                 session_key=target_session_key,
             )
         if command == "/compact":
-            compacted = self.agent.compact_session(session_key, force=True)
+            compacted = self.agent.compact_session(
+                session_key, force=True, session_id=session_id
+            )
             return CommandResult(
                 True, "context compacted" if compacted else "nothing to compact"
             )
         if command == "/ctx":
-            usage = self.agent.get_context_usage(session_key)
-            session_id = self.agent.sessions.get_session_id(session_key)
-            raw_usage = self.agent.sessions.get_last_usage(session_key)
+            usage = self.agent.get_context_usage(session_key, session_id=session_id)
+            resolved_session_id = session_id or self.agent.sessions.get_session_id(session_key)
+            raw_usage = self.agent.sessions.get_last_usage(session_key, session_id=resolved_session_id)
             if isinstance(raw_usage, dict):
                 input_tokens = raw_usage.get("input_tokens")
                 output_tokens = raw_usage.get("output_tokens")
                 total_tokens = raw_usage.get("total_tokens")
                 return CommandResult(
                     True,
-                    f"session_id={session_id}\n"
+                    f"session_id={resolved_session_id}\n"
                     "终端显示: "
                     f"{usage.display}\n"
                     f"input_tokens={input_tokens}  "
@@ -184,7 +194,7 @@ class CommandProcessor:
                 )
             return CommandResult(
                 True,
-                f"session_id={session_id}\n"
+                f"session_id={resolved_session_id}\n"
                 "终端显示: "
                 f"{usage.display}\n"
                 "input_tokens=unknown  output_tokens=unknown  total_tokens=unknown\n"

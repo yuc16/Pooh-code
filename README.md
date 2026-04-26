@@ -104,6 +104,7 @@ CLI prompt 会实时显示当前 `session_id` 和最近一次真实请求的 `to
 - 新会话在第一次模型请求前没有真实值，会显示 `--/258k`
 - 如果你执行了 `/compact`、`/clear` 这类会改写会话的操作，server 端会用本地 message 估算补一个保守值（不再显示成 `--` 或 `0`），等下一次真实模型请求完成后再切换为真实值
 - web 端 /compact 期间该会话会被标记成「运行中」（侧栏 tag + 顶部 banner），切走再切回也能看到，避免误以为命令被取消
+- 长压缩期间用户即使切到别的会话，摘要也只会落到原会话：`compact_session` 会在开始时 pin 一个具体的 session_id，所有后续 load/replace 都用这个 pinned id，而不是中途从 `slot.active_session_id` 重新取（之前会出现 A 的摘要被写进 B 的 transcript 的数据破坏 bug）
 - 这个数值是最近一轮真实 usage 的总量展示，不是严格意义上的输入上下文占用；输入、输出拆分请用 `/ctx` 查看
 
 内置命令：

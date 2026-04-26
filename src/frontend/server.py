@@ -948,9 +948,11 @@ class PoohFrontendHandler(BaseHTTPRequestHandler):
         except ValueError:
             raise ValueError("session is running; cancel it before executing commands")
         try:
-            # CommandProcessor is still slot-oriented; keep web active session in sync for commands.
+            # CommandProcessor 仍是 slot 取向（CLI 用），但 web 端必须把 session_id
+            # 显式传进去，否则像 /compact 这类长任务会读 slot.active；如果用户在
+            # 命令运行期间切到别的会话，active 会被改掉，摘要就会落到错误的 transcript。
             self.server.agent.sessions.switch_session(session_id, session_key=session_key)
-            result = self.server.commands.handle(text, session_key)
+            result = self.server.commands.handle(text, session_key, session_id=session_id)
         finally:
             self.server.runs.finish(run)
         self._send_json(
