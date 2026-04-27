@@ -31,6 +31,10 @@ class ReasoningConfig:
 class SearchConfig:
     tavily_api_key: str = ""
     brave_api_key: str = ""
+    bocha_api_key: str = ""
+    search1api_key: str = ""
+    exa_api_key: str = ""
+    jina_api_key: str = ""
     openalex_api_key: str = ""
 
 
@@ -96,6 +100,14 @@ def _apply_env_from_settings(cfg: AgentConfig) -> None:
         os.environ["TAVILY_API_KEY"] = cfg.search.tavily_api_key
     if cfg.search.brave_api_key:
         os.environ["BRAVE_API_KEY"] = cfg.search.brave_api_key
+    if cfg.search.bocha_api_key:
+        os.environ["BOCHA_API_KEY"] = cfg.search.bocha_api_key
+    if cfg.search.search1api_key:
+        os.environ["SEARCH1API_KEY"] = cfg.search.search1api_key
+    if cfg.search.exa_api_key:
+        os.environ["EXA_API_KEY"] = cfg.search.exa_api_key
+    if cfg.search.jina_api_key:
+        os.environ["JINA_API_KEY"] = cfg.search.jina_api_key
     if cfg.search.openalex_api_key:
         os.environ["OPENALEX_API_KEY"] = cfg.search.openalex_api_key
     if cfg.image.api_key:
@@ -166,6 +178,10 @@ def load_settings(path: Path | None = None) -> AgentConfig:
         search=SearchConfig(
             tavily_api_key=search.get("tavily_api_key", "") or "",
             brave_api_key=search.get("brave_api_key", "") or "",
+            bocha_api_key=search.get("bocha_api_key", "") or "",
+            search1api_key=search.get("search1api_key", "") or "",
+            exa_api_key=search.get("exa_api_key", "") or "",
+            jina_api_key=search.get("jina_api_key", "") or "",
             openalex_api_key=search.get("openalex_api_key", "") or "",
         ),
         image=_build_image_config(image),

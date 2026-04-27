@@ -63,8 +63,8 @@ paper_search(query=..., ...)
 
 只有当 `paper_search` 找不到足够结果，或用户明确要求网页资料/新闻资料时，才退回：
 
-- `web_search`
-- `web_search_and_read`
+- `web_search`（智能多引擎搜索；中文主题会自动用上 Bocha，"找类似文章/相关研究" 会自动用上 Exa）
+- `deep_research`（开放式研究问题：迭代 search→read→reason 直接给带引用的答案，比 `web_search` 抓 5 篇硬拼质量更高）
 
 ### 4. 做文献分层
 
@@ -177,8 +177,10 @@ paper_search(query=..., ...)
 ## 简化决策规则
 
 - 学术问题 → `paper_search` 优先
-- 已有具体论文页面 → `web_fetch`
-- 需要补更多背景网页资料 → `web_search` / `web_search_and_read`
+- 已有具体论文页面 / PDF / 落地页 → `web_fetch`（Jina Reader 直出 markdown）
+- 想找"类似工作/相关研究" → `web_search` 用 `engine="exa"` 或让 auto 命中 Exa
+- 中文学界资料、综述博客、机构页 → `web_search` 默认 auto 即可（中文会路由到 Bocha）
+- 开放式研究综述（"帮我研究 X 方向"且需要带引用的成文段落）→ `deep_research`
 
 ## 参考回答模板
 

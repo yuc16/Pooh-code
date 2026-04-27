@@ -10,7 +10,9 @@
 - 子 agent 搜索代理
 - 飞书长连接入口
 - ChatGPT OAuth / Codex responses 接口
-- 联网搜索（Tavily + Brave 多引擎并行合并 + DuckDuckGo 兜底 + 搜索后自动阅读）
+- 联网搜索（Tavily / Brave / Bocha / Exa / Search1API 五引擎智能路由 + DuckDuckGo 兜底）
+- 网页正文抓取（Jina Reader 优先，BS4 兜底，SPA / JS 渲染页也能解析）
+- 深度研究（Jina DeepSearch 迭代 search→read→reason，带引用产出）
 
 ## README 维护约定
 
@@ -195,7 +197,7 @@ Skills 是一种"按需加载的操作手册"。每个 skill 是 [workplace/runt
 
 现在 skills 已改成按请求自动刷新：新增目录、修改 `SKILL.md`、删除 skill 后，无需重启服务，下一次请求、下一次 `/skills`、以及下一次生成 system prompt 时都会重新扫描 [workplace/runtime/skills](/Users/wangyc/Desktop/projects/Pooh-code/workplace/runtime/skills) 并更新 `use_skill` 工具的可选列表。
 
-当前内置 skill 里，新增了一个面向论文研究的 [paper-research](/Users/wangyc/Desktop/projects/Pooh-code/workplace/runtime/skills/paper-research/SKILL.md)：涉及文献综述、相关工作、参考文献整理等任务时，优先要求 agent 先调用 `paper_search`，再按需补 `web_fetch` / `web_search_and_read` 做精读和背景补充；默认回答格式也被收紧为“每篇论文说明块内直接附 DOI / 链接”，不再默认把参考文献集中堆到文末。
+当前内置 skill 里，新增了一个面向论文研究的 [paper-research](/Users/wangyc/Desktop/projects/Pooh-code/workplace/runtime/skills/paper-research/SKILL.md)：涉及文献综述、相关工作、参考文献整理等任务时，优先要求 agent 先调用 `paper_search`，再按需补 `web_fetch` / `deep_research` 做精读和背景补充；默认回答格式也被收紧为“每篇论文说明块内直接附 DOI / 链接”，不再默认把参考文献集中堆到文末。
 
 ## 飞书
 
@@ -376,41 +378,51 @@ SSE 连接使用 `Connection: close` 并在服务端强制 `self.close_connectio
 
 | 工具 | 用途 | 说明 |
 | --- | --- | --- |
-| `web_search` | 联网搜索 | 默认多引擎并行（Tavily + Brave），按 URL 去重合并；多源命中的结果自动排前面；全部失败时降级到 DuckDuckGo。可通过 `engine` 参数指定单一引擎 |
-| `web_fetch` | 抓取网页正文 | 自动识别正文区域（`<article>`/`<main>` 等），去除导航、广告、脚本等干扰内容 |
-| `web_search_and_read` | 搜索 + 自动阅读 | 先多引擎搜索再自动抓取 top 结果的完整正文，适合需要深入了解的场景 |
+| `web_search` | 联网搜索（智能多引擎） | `engine=auto`（默认）按 query 特征智能路由：中文 → Bocha + Tavily + Brave；neural / 找类似研究 → Exa + Tavily + Brave；时效新闻 → Tavily + Brave + Bocha；默认 → Tavily + Brave + Exa。结果按 URL 去重，多源命中加权置顶。可显式指定 `engine` 为 `tavily/brave/bocha/exa/search1api/duckduckgo` |
+| `web_fetch` | 抓取网页正文 | 优先 Jina Reader（`r.jina.ai`，直出 markdown，SPA / JS 渲染页也能解析），失败回退到 BeautifulSoup 抽正文 |
+| `deep_research` | 深度研究 | Jina DeepSearch（迭代 search→read→reason，直接产出带引用的研究答案 + visited URLs 列表）；Jina 不可用时回退到"多引擎搜索 + Reader 抓 top N 篇正文"。**取代了原来的 `web_search_and_read`** |
 | `paper_search` | 学术论文检索 | 通过 OpenAlex 检索论文，返回标题、作者、年份、venue、DOI、被引数、开放获取链接、摘要，以及 `inline_citation` / `reference_text` 这类引用友好字段；适合论文、综述、related work、参考文献任务 |
 
 ### 使用建议
 
-- 通用网页资料、新闻、产品说明：优先 `web_search`
-- 已知具体网页链接：优先 `web_fetch`
-- 需要自动补读网页正文：用 `web_search_and_read`
+- 通用网页资料、新闻、产品说明：`web_search`（让 auto 路由分流）
+- 中文站资料（知乎 / 公众号 / CSDN / 小红书）：`web_search`，auto 会自动用上 Bocha；也可显式 `engine="bocha"`
+- "找类似的博客 / 找相关研究 / find papers"：`web_search` 用 `engine="exa"` 或让 auto 命中 Exa
+- 已知具体网页链接：`web_fetch`（Jina Reader 输出 markdown）
+- 开放式研究问题（"帮我研究 X 方向"，需要带引用的成文段落）：`deep_research`
 - 涉及论文、文献综述、参考文献：优先 `paper_search`
 
-### 多引擎策略
+### 各引擎分工
 
-`web_search` 在 `engine=auto`（默认）下并行调用所有已配置 key 的引擎，合并去重。每条结果都带 `source` 字段标记来源（如 `tavily`、`brave`、`brave+tavily`）。好处：
+| 引擎 | 强项 | auto 触发条件 |
+| --- | --- | --- |
+| **Tavily** | 给 LLM 优化的摘要 + answer 字段 | 默认进入大多数路由 |
+| **Brave** | 干净独立索引 + extra_snippets | 默认进入大多数路由 |
+| **Bocha（博查）** | 中文站召回（公众号 / 知乎 / 小红书 / CSDN） | 中文 query（CJK 占比 ≥ 30%）或时效查询 |
+| **Exa** | 神经 / 语义搜索 + findSimilar | 含 "similar to / find papers / 类似 / 相关研究" |
+| **Search1API** | Google/Bing 元搜索聚合 | 不进入 auto，仅显式 `engine="search1api"` 时用作兜底加宽召回 |
+| **DuckDuckGo** | 无 key 兜底 | 所有引擎都失败时 |
 
-- **可靠性**：单引擎挂掉不影响主流程
-- **覆盖广度**：不同引擎索引不同内容，结果更全
-- **置信加权**：多引擎都返回的 URL 会排到合并列表的最前面
+### 配置 API Key
 
-配置 API Key（统一在 [workplace/runtime/config/settings.json](/Users/wangyc/Desktop/projects/Pooh-code/workplace/runtime/config/settings.json) 配置）：
+统一在 [workplace/runtime/config/settings.json](/Users/wangyc/Desktop/projects/Pooh-code/workplace/runtime/config/settings.json) 配置（`load_settings` 启动时自动同步到环境变量）：
 
 ```json
 {
   "search": {
     "tavily_api_key": "tvly-xxx",
     "brave_api_key": "BSA01...",
+    "bocha_api_key": "sk-...",
+    "exa_api_key": "...",
+    "search1api_key": "...",
+    "jina_api_key": "jina_...",
     "openalex_api_key": "oa-xxx"
   }
 }
 ```
 
-- 两个 key 都配 → 双引擎并行合并（推荐）
-- 只配一个 → 单引擎 + DuckDuckGo 兜底
-- 都不配 → 全部回落 DuckDuckGo
+- 任意子集配置都能跑：`_route_engines` 会过滤掉没 key 的引擎，至少回落到 DuckDuckGo
+- `jina_api_key` 同时驱动 `web_fetch`（Reader）和 `deep_research`（DeepSearch）；不配时 fetch 自动用 BS4，研究自动回落 search + read
 - `paper_search` 默认走 OpenAlex；如果配置了 `openalex_api_key`，会自动带上 `api_key` 调用，以提升论文检索的稳定性和额度
 - `paper-research` skill 会优先利用 `paper_search` 返回的 `inline_citation` 和 `reference_text` 组织回答，但默认展示会把 DOI / 链接放在每篇论文说明块内部，而不是统一放到文末参考文献区
 

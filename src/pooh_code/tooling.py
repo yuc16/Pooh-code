@@ -56,13 +56,65 @@ def _get_brave_key() -> str:
     return os.getenv("BRAVE_API_KEY", "")
 
 
+def _get_bocha_key() -> str:
+    return os.getenv("BOCHA_API_KEY", "")
+
+
+def _get_search1api_key() -> str:
+    return os.getenv("SEARCH1API_KEY", "")
+
+
+def _get_exa_key() -> str:
+    return os.getenv("EXA_API_KEY", "")
+
+
+def _get_jina_key() -> str:
+    return os.getenv("JINA_API_KEY", "")
+
+
 def _get_openalex_key() -> str:
     return os.getenv("OPENALEX_API_KEY", "")
 
 
 _TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 _BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
+_BOCHA_SEARCH_URL = "https://api.bochaai.com/v1/web-search"
+_SEARCH1API_URL = "https://api.search1api.com/search"
+_EXA_SEARCH_URL = "https://api.exa.ai/search"
+_JINA_READER_URL = "https://r.jina.ai/"
+_JINA_DEEPSEARCH_URL = "https://deepsearch.jina.ai/v1/chat/completions"
 _OPENALEX_WORKS_URL = "https://api.openalex.org/works"
+
+
+def _is_chinese_query(query: str) -> bool:
+    """判断 query 是否以中文为主：CJK 字符占比 >= 30% 视为中文。"""
+    if not query:
+        return False
+    total = sum(1 for ch in query if not ch.isspace())
+    if total == 0:
+        return False
+    cjk = sum(1 for ch in query if "一" <= ch <= "鿿")
+    return cjk / total >= 0.3
+
+
+def _is_neural_query(query: str) -> bool:
+    """是否适合语义/神经搜索：明确想找"类似/相关"内容时偏好 Exa。"""
+    q = query.lower()
+    triggers = (
+        "similar to", "like this", "find papers", "related work",
+        "类似", "相关研究", "相关论文", "类似的博客", "类似的文章",
+    )
+    return any(t in q for t in triggers)
+
+
+def _is_news_query(query: str) -> bool:
+    """是否是时效性查询：明显的"最新/新闻/年份"信号 → 偏好 Tavily news + Brave + Bocha。"""
+    q = query.lower()
+    triggers = ("新闻", "最新", "今日", "今天", "本周", "近期", "news", "latest", "today", "breaking")
+    if any(t in q for t in triggers):
+        return True
+    # 含明显年份（2024-2027）也视为偏时效
+    return bool(re.search(r"\b20(2[4-9]|3\d)\b", q))
 
 # 需要移除的非正文标签
 _STRIP_TAGS = {"script", "style", "noscript", "nav", "footer", "header", "aside", "iframe", "svg"}
@@ -416,9 +468,10 @@ class ToolRegistry:
             ToolSpec(
                 name="web_fetch",
                 description=(
-                    "Fetch a web page and extract its main content as clean readable text. "
-                    "Automatically strips navigation, ads, and boilerplate. "
-                    "Use this when you already have a specific URL to read."
+                    "Fetch a web page and return clean markdown of its main content. "
+                    "Backed by Jina Reader (handles SPA / JS-rendered pages well), "
+                    "with a BeautifulSoup fallback if Jina is unavailable. "
+                    "Use when you already have a specific URL."
                 ),
                 input_schema={
                     "type": "object",
@@ -434,9 +487,12 @@ class ToolRegistry:
             ToolSpec(
                 name="web_search",
                 description=(
-                    "Search the web using multiple engines in parallel (Tavily + Brave by default) "
-                    "and merge deduplicated results. Falls back to DuckDuckGo if all configured "
-                    "engines fail. Returns titles, URLs, and snippets with source engine labels."
+                    "Search the web with smart multi-engine routing. In auto mode the engines are "
+                    "picked by query intent — Chinese queries → Bocha + Tavily; semantic / "
+                    "'similar to / find papers' → Exa + Tavily; news / latest → Tavily + Brave + "
+                    "Bocha; default → Tavily + Brave + Exa. Results are URL-deduplicated and "
+                    "cross-engine consensus is boosted to the top. Each result carries a `source` "
+                    "label (e.g. `tavily+brave`). Falls back to DuckDuckGo if everything else fails."
                 ),
                 input_schema={
                     "type": "object",
@@ -449,8 +505,15 @@ class ToolRegistry:
                         },
                         "engine": {
                             "type": "string",
-                            "enum": ["auto", "tavily", "brave", "duckduckgo"],
-                            "description": "auto: multi-engine merge (default); or a single engine.",
+                            "enum": [
+                                "auto", "tavily", "brave", "bocha", "exa",
+                                "search1api", "duckduckgo",
+                            ],
+                            "description": (
+                                "auto = smart routing (default). Or pin to one: "
+                                "tavily(answers/general), brave(独立索引), bocha(中文站), "
+                                "exa(neural/语义), search1api(Google 元搜索), duckduckgo(兜底)."
+                            ),
                         },
                         "search_depth": {
                             "type": "string",
@@ -464,25 +527,35 @@ class ToolRegistry:
         )
         self._register(
             ToolSpec(
-                name="web_search_and_read",
+                name="deep_research",
                 description=(
-                    "Search the web and automatically fetch the full content of top results. "
-                    "More thorough than web_search alone — use this when you need detailed "
-                    "information, not just snippets. Equivalent to search + fetch for each result."
+                    "Run a deep, iterative research loop on a question. Backed by Jina DeepSearch "
+                    "(search → read → reason cycles, returns a cited answer with visited URLs). "
+                    "If Jina is unavailable, falls back to multi-engine search + Jina Reader on "
+                    "the top results. Use this for open-ended research questions where snippets "
+                    "from web_search are not enough — replaces the old web_search_and_read."
                 ),
                 input_schema={
                     "type": "object",
                     "required": ["query"],
                     "properties": {
-                        "query": {"type": "string", "description": "Search query string."},
-                        "max_results": {
+                        "query": {
+                            "type": "string",
+                            "description": "Research question (full sentence, not just keywords).",
+                        },
+                        "reasoning_effort": {
+                            "type": "string",
+                            "enum": ["low", "medium", "high"],
+                            "description": "Jina DeepSearch reasoning depth (default medium).",
+                        },
+                        "max_pages": {
                             "type": "integer",
-                            "description": "Number of pages to fetch (default 3, max 5).",
+                            "description": "Fallback path: how many top pages to fetch (default 4, max 6).",
                         },
                     },
                 },
             ),
-            self._web_search_and_read,
+            self._deep_research,
         )
         self._register(
             ToolSpec(
@@ -709,24 +782,57 @@ class ToolRegistry:
     ) -> str:
         max_results = min(max(max_results, 1), 15)
         results = _search_dispatch(query, max_results, engine, search_depth)
-        return json.dumps(results, ensure_ascii=False, indent=2)
+        meta = {
+            "query": query,
+            "engine_requested": engine,
+            "engines_used": sorted({r.get("source", "") for r in results if r.get("source")}),
+            "count": len(results),
+            "results": results,
+        }
+        return json.dumps(meta, ensure_ascii=False, indent=2)
 
-    # ── web: search + read ──────────────────────────────────────
+    # ── web: deep research ─────────────────────────────────────
 
-    def _web_search_and_read(self, query: str, max_results: int = 3) -> str:
-        max_results = min(max(max_results, 1), 5)
-        search_results = _search_dispatch(query, max_results, "auto", "advanced")
+    def _deep_research(
+        self,
+        query: str,
+        reasoning_effort: str = "medium",
+        max_pages: int = 4,
+    ) -> str:
+        """优先用 Jina DeepSearch（迭代式 search→read→reason）；
+        没 key 或失败时，回退到 多引擎搜索 + Jina Reader 抓 top N 篇正文。"""
+        if reasoning_effort not in {"low", "medium", "high"}:
+            reasoning_effort = "medium"
+        max_pages = min(max(max_pages, 1), 6)
 
-        # 逐个抓取正文
-        output_parts = []
-        for i, item in enumerate(search_results):
-            url = item.get("url") or item.get("href", "")
+        if _get_jina_key():
+            try:
+                ds = _jina_deepsearch(query, reasoning_effort=reasoning_effort)
+                payload = {
+                    "mode": "jina_deepsearch",
+                    "query": query,
+                    "reasoning_effort": reasoning_effort,
+                    "answer": ds.get("answer", ""),
+                    "visited_urls": ds.get("visited_urls", []),
+                    "usage": ds.get("usage", {}),
+                }
+                return _truncate(json.dumps(payload, ensure_ascii=False, indent=2))
+            except Exception as exc:
+                logger.warning("jina deepsearch failed: %s; falling back to search+read", exc)
+
+        # Fallback：多引擎搜索 → 取 top max_pages → Jina Reader 抓全文
+        search_results = _search_dispatch(query, max_pages, "auto", "advanced")
+        output_parts: list[str] = [
+            f"# Deep Research（fallback：search + read）\n查询：{query}\n"
+        ]
+        for i, item in enumerate(search_results[:max_pages]):
+            url = item.get("url") or ""
             title = item.get("title", "")
-            snippet = item.get("content") or item.get("body", "")
-            section = f"## [{i+1}] {title}\nURL: {url}\n"
+            snippet = item.get("content") or ""
+            source = item.get("source", "")
+            section = f"\n## [{i+1}] {title}\nURL: {url}\nSource: {source}\n"
             if snippet:
                 section += f"摘要: {snippet}\n"
-            # 尝试抓取完整正文
             try:
                 full_text = _fetch_and_extract(url, limit=6000)
                 section += f"\n--- 正文 ---\n{full_text}\n"
@@ -863,8 +969,26 @@ def _extract_readable_text(html: str) -> str:
     return text.strip()
 
 
-def _fetch_and_extract(url: str, limit: int = 12000) -> str:
-    """抓取网页并提取正文。"""
+def _jina_reader_fetch(url: str, limit: int = 12000) -> str:
+    """用 Jina Reader (`r.jina.ai`) 抓取并直出 markdown，对 SPA / JS 渲染页效果远好于 BS4。"""
+    jina_key = _get_jina_key()
+    headers = {
+        "Accept": "text/markdown",
+        "X-Return-Format": "markdown",
+        "User-Agent": "pooh-code/jina-reader",
+    }
+    if jina_key:
+        headers["Authorization"] = f"Bearer {jina_key}"
+    resp = httpx.get(_JINA_READER_URL + url, headers=headers, timeout=25.0, follow_redirects=True)
+    resp.raise_for_status()
+    text = (resp.text or "").strip()
+    if not text:
+        raise ValueError("jina reader returned empty body")
+    return _truncate(text, limit)
+
+
+def _bs4_fetch_and_extract(url: str, limit: int = 12000) -> str:
+    """直接抓 HTML + BeautifulSoup 提取正文，作为 Jina Reader 的兜底。"""
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -874,6 +998,16 @@ def _fetch_and_extract(url: str, limit: int = 12000) -> str:
     response.raise_for_status()
     text = _extract_readable_text(response.text)
     return _truncate(text, limit)
+
+
+def _fetch_and_extract(url: str, limit: int = 12000) -> str:
+    """抓取网页并提取正文：优先 Jina Reader（markdown 输出，SPA 也能解析），失败回退到 BS4。"""
+    if _get_jina_key():
+        try:
+            return _jina_reader_fetch(url, limit)
+        except Exception as exc:
+            logger.warning("jina reader failed for %s: %s; falling back to BS4", url, exc)
+    return _bs4_fetch_and_extract(url, limit)
 
 
 def _decode_openalex_abstract(inverted_index: dict[str, Any] | None) -> str:
@@ -1234,6 +1368,120 @@ def _brave_search_raw(query: str, max_results: int = 8) -> list[dict[str, Any]]:
     return formatted
 
 
+# ── Bocha（博查，中文友好）────────────────────────────────────
+
+
+def _bocha_search_raw(query: str, max_results: int = 8) -> list[dict[str, Any]]:
+    """博查 web-search：对中文站（知乎/微信公众号/CSDN/小红书等）召回明显强于 Tavily/Brave。"""
+    headers = {
+        "Authorization": f"Bearer {_get_bocha_key()}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "query": query,
+        "summary": True,
+        "count": min(max(max_results, 1), 20),
+        "freshness": "noLimit",
+    }
+    resp = httpx.post(_BOCHA_SEARCH_URL, json=payload, headers=headers, timeout=30.0)
+    resp.raise_for_status()
+    data = resp.json()
+    pages = (((data.get("data") or {}).get("webPages") or {}).get("value")) or []
+    formatted: list[dict[str, Any]] = []
+    for item in pages:
+        url = item.get("url", "") or ""
+        try:
+            site = (urlparse(url).netloc or "").lower()
+        except Exception:
+            site = item.get("siteName", "") or ""
+        snippet = item.get("summary") or item.get("snippet") or ""
+        formatted.append({
+            "title": _strip_html(item.get("name", "")),
+            "url": url,
+            "content": _strip_html(snippet),
+            "score": None,
+            "source": "bocha",
+            "site": site,
+            "language": "zh" if _is_chinese_query(snippet or item.get("name", "")) else "",
+        })
+    return formatted
+
+
+# ── Exa（神经/语义检索）───────────────────────────────────────
+
+
+def _exa_search_raw(query: str, max_results: int = 8) -> list[dict[str, Any]]:
+    """Exa 语义检索：擅长"找类似文章/技术博客/研究内容"。"""
+    headers = {
+        "x-api-key": _get_exa_key(),
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "query": query,
+        "type": "auto",  # auto 让 Exa 自己选 keyword/neural
+        "numResults": min(max(max_results, 1), 15),
+        "contents": {"text": {"maxCharacters": 800}},
+    }
+    resp = httpx.post(_EXA_SEARCH_URL, json=payload, headers=headers, timeout=30.0)
+    resp.raise_for_status()
+    data = resp.json()
+    raw = data.get("results", []) or []
+    formatted: list[dict[str, Any]] = []
+    for item in raw:
+        url = item.get("url", "") or ""
+        try:
+            site = (urlparse(url).netloc or "").lower()
+        except Exception:
+            site = ""
+        text_content = item.get("text") or item.get("snippet") or ""
+        formatted.append({
+            "title": item.get("title", ""),
+            "url": url,
+            "content": text_content,
+            "score": item.get("score"),
+            "source": "exa",
+            "site": site,
+            "language": "",
+        })
+    return formatted
+
+
+# ── Search1API（Google/Bing 元搜索聚合，兜底加宽召回）────────────
+
+
+def _search1api_search_raw(query: str, max_results: int = 8) -> list[dict[str, Any]]:
+    headers = {
+        "Authorization": f"Bearer {_get_search1api_key()}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "query": query,
+        "search_service": "google",
+        "max_results": min(max(max_results, 1), 20),
+    }
+    resp = httpx.post(_SEARCH1API_URL, json=payload, headers=headers, timeout=30.0)
+    resp.raise_for_status()
+    data = resp.json()
+    raw = data.get("results", []) or []
+    formatted: list[dict[str, Any]] = []
+    for item in raw:
+        url = item.get("link") or item.get("url", "")
+        try:
+            site = (urlparse(url).netloc or "").lower()
+        except Exception:
+            site = ""
+        formatted.append({
+            "title": item.get("title", ""),
+            "url": url,
+            "content": item.get("snippet") or item.get("content", ""),
+            "score": None,
+            "source": "search1api",
+            "site": site,
+            "language": "",
+        })
+    return formatted
+
+
 # ── DuckDuckGo (fallback) ─────────────────────────────────────
 
 
@@ -1307,38 +1555,91 @@ def _merge_results(
     return merged[:max_results]
 
 
+_ENGINE_RUNNERS: dict[str, Callable[..., list[dict[str, Any]]]] = {
+    "tavily": lambda q, n, depth="basic": _tavily_search_raw(q, n, depth),
+    "brave": lambda q, n, **_: _brave_search_raw(q, n),
+    "bocha": lambda q, n, **_: _bocha_search_raw(q, n),
+    "exa": lambda q, n, **_: _exa_search_raw(q, n),
+    "search1api": lambda q, n, **_: _search1api_search_raw(q, n),
+    "duckduckgo": lambda q, n, **_: _ddg_search_raw(q, n),
+}
+
+
+def _engine_available(name: str) -> bool:
+    if name == "tavily":
+        return bool(_get_tavily_key())
+    if name == "brave":
+        return bool(_get_brave_key())
+    if name == "bocha":
+        return bool(_get_bocha_key())
+    if name == "exa":
+        return bool(_get_exa_key())
+    if name == "search1api":
+        return bool(_get_search1api_key())
+    if name == "duckduckgo":
+        return True
+    return False
+
+
+def _route_engines(query: str) -> list[str]:
+    """auto 模式下根据 query 特征挑 2–3 个最契合的引擎，避免无脑全跑。"""
+    if _is_neural_query(query):
+        # "找类似/相关研究" → Exa 神经 + Tavily 摘要
+        plan = ["exa", "tavily", "brave"]
+    elif _is_chinese_query(query):
+        # 中文 query → 博查抓中文站 + Tavily 兜全局
+        plan = ["bocha", "tavily", "brave"]
+    elif _is_news_query(query):
+        # 时效性 → Tavily(answer 含时间) + Brave + Bocha
+        plan = ["tavily", "brave", "bocha"]
+    else:
+        # 默认英文/通用 → Tavily + Brave + Exa
+        plan = ["tavily", "brave", "exa"]
+
+    available = [name for name in plan if _engine_available(name)]
+    if not available:
+        # 所有首选都没配 → 退到任何配了 key 的引擎
+        for fallback in ("tavily", "brave", "bocha", "exa", "search1api"):
+            if _engine_available(fallback):
+                available.append(fallback)
+        if not available:
+            available.append("duckduckgo")
+    return available
+
+
 def _search_dispatch(
     query: str,
     max_results: int,
     engine: str = "auto",
     search_depth: str = "basic",
 ) -> list[dict[str, Any]]:
-    """根据 engine 参数调度搜索；auto 模式并行多引擎合并。"""
+    """根据 engine 参数调度搜索；auto 模式按 query 特征智能选引擎并行合并。"""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    tavily_key = _get_tavily_key()
-    brave_key = _get_brave_key()
-
     # 单引擎模式
-    if engine == "tavily":
-        return _tavily_search_raw(query, max_results, search_depth) if tavily_key else []
-    if engine == "brave":
-        return _brave_search_raw(query, max_results) if brave_key else []
+    if engine in _ENGINE_RUNNERS and engine != "duckduckgo":
+        if not _engine_available(engine):
+            return []
+        runner = _ENGINE_RUNNERS[engine]
+        try:
+            return runner(query, max_results, depth=search_depth)
+        except Exception as exc:
+            logger.warning("%s search failed: %s", engine, exc)
+            return []
     if engine == "duckduckgo":
         return _ddg_search_raw(query, max_results)
 
-    # auto：并行多引擎
-    tasks: dict[Any, str] = {}
-    # 每个引擎各自取 max_results 条，合并后再截断
+    # auto：智能路由
+    chosen = _route_engines(query)
+    if chosen == ["duckduckgo"]:
+        return _ddg_search_raw(query, max_results)
+
     per_engine = max(max_results, 5)
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        if tavily_key:
-            tasks[pool.submit(_tavily_search_raw, query, per_engine, search_depth)] = "tavily"
-        if brave_key:
-            tasks[pool.submit(_brave_search_raw, query, per_engine)] = "brave"
-        if not tasks:
-            # 两家都没 key → 用 DDG 兜底
-            return _ddg_search_raw(query, max_results)
+    tasks: dict[Any, str] = {}
+    with ThreadPoolExecutor(max_workers=max(len(chosen), 1)) as pool:
+        for name in chosen:
+            runner = _ENGINE_RUNNERS[name]
+            tasks[pool.submit(runner, query, per_engine, depth=search_depth)] = name
 
         result_lists: list[list[dict[str, Any]]] = []
         for future in as_completed(tasks):
@@ -1349,8 +1650,42 @@ def _search_dispatch(
                 logger.warning("%s search failed: %s", name, exc)
 
     if not result_lists:
-        # 所有配置的引擎都挂了 → DDG 兜底
-        logger.warning("All configured engines failed; falling back to DuckDuckGo")
+        logger.warning("All routed engines failed; falling back to DuckDuckGo")
         return _ddg_search_raw(query, max_results)
 
     return _merge_results(result_lists, max_results)
+
+
+# ── Jina DeepSearch（深度研究）────────────────────────────────
+
+
+def _jina_deepsearch(query: str, reasoning_effort: str = "medium") -> dict[str, Any]:
+    """Jina DeepSearch：迭代式 search → read → reason，直接产出带引用的研究答案。"""
+    jina_key = _get_jina_key()
+    if not jina_key:
+        raise RuntimeError("JINA_API_KEY not configured")
+    headers = {
+        "Authorization": f"Bearer {jina_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    payload = {
+        "model": "jina-deepsearch-v1",
+        "messages": [{"role": "user", "content": query}],
+        "stream": False,
+        "reasoning_effort": reasoning_effort,
+    }
+    resp = httpx.post(_JINA_DEEPSEARCH_URL, json=payload, headers=headers, timeout=180.0)
+    resp.raise_for_status()
+    data = resp.json()
+    choices = data.get("choices") or []
+    answer = ""
+    if choices:
+        msg = choices[0].get("message") or {}
+        answer = msg.get("content") or ""
+    visited_urls = data.get("visitedURLs") or []
+    return {
+        "answer": answer,
+        "visited_urls": visited_urls,
+        "usage": data.get("usage", {}),
+    }
