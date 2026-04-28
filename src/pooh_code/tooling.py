@@ -495,7 +495,6 @@ class ToolRegistry:
                     "                          可加 search_depth='advanced' 提质。\n"
                     "  • engine='exa'        — 神经/语义检索：'找类似的博客'、'与这篇论文最相关的工作'、\n"
                     "                          关键词难以命中但语义清楚的场景。\n"
-                    "  • engine='search1api' — Google/Bing 元搜索聚合，前面三家都漏时再用。\n"
                     "  • engine='duckduckgo' — 无 key 兜底，正常情况不要选。\n"
                     "\n"
                     "若结果稀疏或单一视角，**不要循环重试**，要么换 engine 试不同索引，要么升级到 deep_research。"
@@ -512,13 +511,12 @@ class ToolRegistry:
                         "engine": {
                             "type": "string",
                             "enum": [
-                                "auto", "tavily", "brave", "bocha", "exa",
-                                "search1api", "duckduckgo",
+                                "auto", "tavily", "brave", "bocha", "exa", "duckduckgo",
                             ],
                             "description": (
                                 "auto = smart routing (default). Or pin to one: "
                                 "tavily(answers/general), brave(独立索引), bocha(中文站), "
-                                "exa(neural/语义), search1api(Google 元搜索), duckduckgo(兜底)."
+                                "exa(neural/语义), duckduckgo(兜底)."
                             ),
                         },
                         "search_depth": {
@@ -1453,6 +1451,9 @@ def _exa_search_raw(query: str, max_results: int = 8) -> list[dict[str, Any]]:
 
 
 # ── Search1API（Google/Bing 元搜索聚合，兜底加宽召回）────────────
+# 当前 prompt 层（web_search 描述 / TOOLS.md / README）已暂时隐藏此引擎，
+# 因为账号无额度。代码与 settings.json key 保留，恢复时把 README 的"暂时下线"
+# 块清掉、把 enum 加回 "search1api" 即可，详见 README.md。
 
 
 def _search1api_search_raw(query: str, max_results: int = 8) -> list[dict[str, Any]]:

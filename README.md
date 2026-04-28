@@ -10,7 +10,7 @@
 - 子 agent 搜索代理
 - 飞书长连接入口
 - ChatGPT OAuth / Codex responses 接口
-- 联网搜索（Tavily / Brave / Bocha / Exa / Search1API 五引擎智能路由 + DuckDuckGo 兜底）
+- 联网搜索（Tavily / Brave / Bocha / Exa 四引擎智能路由 + DuckDuckGo 兜底）
 - 网页正文抓取（Jina Reader 优先，BS4 兜底，SPA / JS 渲染页也能解析）
 - 深度研究（Jina DeepSearch 迭代 search→read→reason，带引用产出）
 
@@ -378,7 +378,7 @@ SSE 连接使用 `Connection: close` 并在服务端强制 `self.close_connectio
 
 | 工具 | 用途 | 说明 |
 | --- | --- | --- |
-| `web_search` | 联网搜索（多引擎） | `engine=auto`（默认）并跑 **Tavily + Brave + Bocha** 三家，覆盖中英文双向；只有 neural 触发（"similar to / 类似 / 相关研究"）才换成 Exa + Tavily + Brave。结果按 URL 去重，多源命中加权置顶。可显式指定 `engine` 为 `tavily/brave/bocha/exa/search1api/duckduckgo`，agent 应在用户对"信息所在地"有明确倾向时主动 override |
+| `web_search` | 联网搜索（多引擎） | `engine=auto`（默认）并跑 **Tavily + Brave + Bocha** 三家，覆盖中英文双向；只有 neural 触发（"similar to / 类似 / 相关研究"）才换成 Exa + Tavily + Brave。结果按 URL 去重，多源命中加权置顶。可显式指定 `engine` 为 `tavily/brave/bocha/exa/duckduckgo`，agent 应在用户对"信息所在地"有明确倾向时主动 override |
 | `web_fetch` | 抓取网页正文 | 优先 Jina Reader（`r.jina.ai`，直出 markdown，SPA / JS 渲染页也能解析），失败回退到 BeautifulSoup 抽正文 |
 | `deep_research` | 深度研究 | Jina DeepSearch（迭代 search→read→reason，直接产出带引用的研究答案 + visited URLs 列表）；Jina 不可用时回退到"多引擎搜索 + Reader 抓 top N 篇正文"。**取代了原来的 `web_search_and_read`** |
 | `paper_search` | 学术论文检索 | 通过 OpenAlex 检索论文，返回标题、作者、年份、venue、DOI、被引数、开放获取链接、摘要，以及 `inline_citation` / `reference_text` 这类引用友好字段；适合论文、综述、related work、参考文献任务 |
@@ -412,8 +412,9 @@ SSE 连接使用 `Connection: close` 并在服务端强制 `self.close_connectio
 | **Brave** | 干净独立索引 + extra_snippets | 默认进入大多数路由 |
 | **Bocha（博查）** | 中文站召回（公众号 / 知乎 / 小红书 / CSDN） | 中文 query（CJK 占比 ≥ 30%）或时效查询 |
 | **Exa** | 神经 / 语义搜索 + findSimilar | 含 "similar to / find papers / 类似 / 相关研究" |
-| **Search1API** | Google/Bing 元搜索聚合 | 不进入 auto，仅显式 `engine="search1api"` 时用作兜底加宽召回 |
 | **DuckDuckGo** | 无 key 兜底 | 所有引擎都失败时 |
+
+> ⚠️ **Search1API 暂时下线（无额度）**：代码、`settings.json` 里的 `search1api_key`、`_ENGINE_RUNNERS` 注册全部保留；只是 prompt 层面（工具描述 enum、TOOLS.md cheatsheet、本节表格）已撤掉相关条目，避免 agent 显式调用后吃 402/500 失败响应。**额度恢复后的回滚步骤**见下文 [#暂时下线引擎的恢复指引](#暂时下线引擎的恢复指引)。
 
 ### 配置 API Key
 
@@ -426,7 +427,7 @@ SSE 连接使用 `Connection: close` 并在服务端强制 `self.close_connectio
     "brave_api_key": "BSA01...",
     "bocha_api_key": "sk-...",
     "exa_api_key": "...",
-    "search1api_key": "...",
+    "search1api_key": "...",          // 暂时下线（无额度），保留位置等回归
     "jina_api_key": "jina_...",
     "openalex_api_key": "oa-xxx"
   }
@@ -437,6 +438,30 @@ SSE 连接使用 `Connection: close` 并在服务端强制 `self.close_connectio
 - `jina_api_key` 同时驱动 `web_fetch`（Reader）和 `deep_research`（DeepSearch）；不配时 fetch 自动用 BS4，研究自动回落 search + read
 - `paper_search` 默认走 OpenAlex；如果配置了 `openalex_api_key`，会自动带上 `api_key` 调用，以提升论文检索的稳定性和额度
 - `paper-research` skill 会优先利用 `paper_search` 返回的 `inline_citation` 和 `reference_text` 组织回答，但默认展示会把 DOI / 链接放在每篇论文说明块内部，而不是统一放到文末参考文献区
+
+### 暂时下线引擎的恢复指引
+
+某些引擎可能因额度/费用临时下线。**代码与 key 都保留**，只在 prompt 层撤下，避免 agent 显式调用后失败。
+
+#### Search1API（2026-04 下线）
+
+下线原因：账号无额度且短期内不会充值。代码路径完整保留在 [tooling.py](/Users/wangyc/Desktop/projects/Pooh-code/src/pooh_code/tooling.py)（`_search1api_search_raw` / `_ENGINE_RUNNERS["search1api"]` / `_engine_available("search1api")`），settings.json 的 `search1api_key` 也保留。
+
+**额度恢复时的回滚动作（4 处）**：
+
+1. [src/pooh_code/tooling.py](/Users/wangyc/Desktop/projects/Pooh-code/src/pooh_code/tooling.py) `web_search` 工具描述：
+   - `enum` 数组里加回 `"search1api"`
+   - description 里加回 `"  • engine='search1api' — Google/Bing 元搜索聚合，前面三家都漏时再用。\n"`
+2. [workplace/runtime/TOOLS.md](/Users/wangyc/Desktop/projects/Pooh-code/workplace/runtime/TOOLS.md)：
+   - "智能多引擎联网搜索" 一行加回 Search1API
+   - 引擎 cheatsheet 表格加回 `search1api` 行
+3. [README.md](/Users/wangyc/Desktop/projects/Pooh-code/README.md)（本文件）：
+   - "联网搜索（Tavily / Brave / Bocha / Exa 四引擎...）" 改回"五引擎"并加回 Search1API
+   - "各引擎分工" 表格里加回 Search1API 行
+   - 删掉 `> ⚠️ Search1API 暂时下线...` 那段警示
+   - 删掉本节
+4. [tests/test_search.py](/Users/wangyc/Desktop/projects/Pooh-code/tests/test_search.py)：
+   - 之前已经在 Section 2 的 plans 列表里包含了 Search1API 冒烟测试，无需改
 
 ## 推理配置
 

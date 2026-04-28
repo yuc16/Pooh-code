@@ -19,7 +19,7 @@
 - `web_fetch`
   - 抓取网页并提取干净正文（Jina Reader 优先，SPA / JS 页也能解析）
 - `web_search`
-  - 智能多引擎联网搜索（Tavily / Brave / Bocha / Exa / Search1API + DDG 兜底，按 query 智能路由）
+  - 智能多引擎联网搜索（Tavily / Brave / Bocha / Exa + DDG 兜底，按 query 智能路由）
 - `deep_research`
   - 深度研究：迭代 search → read → reason，输出带引用的研究答案（Jina DeepSearch）
 - `paper_search`
@@ -101,7 +101,6 @@ output/<session_id>/
 | `brave` | 独立索引（不依赖 Google/Bing） — 干净的 snippet，对长尾技术站、被 SEO 严重污染的话题反而更准 | 主流引擎被广告/SEO 污染严重的 query（"X 怎么样"、"Y vs Z"）；想避开 Google 偏见交叉验证 |
 | `tavily` | LLM 友好——返回 `answer` 字段 + 高相关度结果，可加 `search_depth="advanced"` 提质 | 想要快速一句话答案 + 来源；通用问答；想用 advanced 深度时 |
 | `exa` | 神经/语义检索 + findSimilar | 关键词难以命中但语义清楚："找类似的博客"、"与这篇论文最相关的工作"、"用这个 idea 做的产品有哪些" |
-| `search1api` | Google/Bing 元搜索聚合 | 前面三家都召回稀疏时再用作兜底加宽 |
 | `duckduckgo` | 无 key 兜底 | 正常情况不选 |
 
 **判断"实体国别 ≠ 信息所在地"的关键例子**：
