@@ -16,7 +16,10 @@ import re
 
 import httpx
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
-from duckduckgo_search import DDGS
+try:  # 新包名（>= 9.x）；老 duckduckgo_search 已弃用
+    from ddgs import DDGS  # type: ignore
+except ImportError:  # pragma: no cover - 兼容旧环境
+    from duckduckgo_search import DDGS  # type: ignore
 
 from .models import ToolSpec
 from .paths import CACHE_DIR, WORKPLACE_DIR
@@ -87,14 +90,11 @@ _OPENALEX_WORKS_URL = "https://api.openalex.org/works"
 
 
 def _is_chinese_query(query: str) -> bool:
-    """判断 query 是否以中文为主：CJK 字符占比 >= 30% 视为中文。"""
+    """检测一段文本是否含明显中文（≥3 个 CJK 字符）。
+    仅用于 Bocha 结果项打 language 标签，不再用于路由。"""
     if not query:
         return False
-    total = sum(1 for ch in query if not ch.isspace())
-    if total == 0:
-        return False
-    cjk = sum(1 for ch in query if "一" <= ch <= "鿿")
-    return cjk / total >= 0.3
+    return sum(1 for ch in query if "一" <= ch <= "鿿") >= 3
 
 
 def _is_neural_query(query: str) -> bool:
@@ -107,14 +107,6 @@ def _is_neural_query(query: str) -> bool:
     return any(t in q for t in triggers)
 
 
-def _is_news_query(query: str) -> bool:
-    """是否是时效性查询：明显的"最新/新闻/年份"信号 → 偏好 Tavily news + Brave + Bocha。"""
-    q = query.lower()
-    triggers = ("新闻", "最新", "今日", "今天", "本周", "近期", "news", "latest", "today", "breaking")
-    if any(t in q for t in triggers):
-        return True
-    # 含明显年份（2024-2027）也视为偏时效
-    return bool(re.search(r"\b20(2[4-9]|3\d)\b", q))
 
 # 需要移除的非正文标签
 _STRIP_TAGS = {"script", "style", "noscript", "nav", "footer", "header", "aside", "iframe", "svg"}
@@ -487,12 +479,26 @@ class ToolRegistry:
             ToolSpec(
                 name="web_search",
                 description=(
-                    "Search the web with smart multi-engine routing. In auto mode the engines are "
-                    "picked by query intent — Chinese queries → Bocha + Tavily; semantic / "
-                    "'similar to / find papers' → Exa + Tavily; news / latest → Tavily + Brave + "
-                    "Bocha; default → Tavily + Brave + Exa. Results are URL-deduplicated and "
-                    "cross-engine consensus is boosted to the top. Each result carries a `source` "
-                    "label (e.g. `tavily+brave`). Falls back to DuckDuckGo if everything else fails."
+                    "Multi-engine web search. Default `engine='auto'` runs Tavily + Brave + Bocha "
+                    "in parallel (covers both English and Chinese sources, dedupes by URL, boosts "
+                    "cross-engine consensus to the top). Switches to Exa-led plan only when the "
+                    "query is semantic/neural ('similar to', 'find papers about', '类似', '相关研究').\n"
+                    "\n"
+                    "Override `engine` when the user wants a SPECIFIC viewpoint or you need a "
+                    "specific strength — auto cannot infer this:\n"
+                    "  • engine='bocha'      — 想要中文社区视角（知乎/公众号/小红书/CSDN/国内媒体）。\n"
+                    "                          典型触发：'国内案例'、'中文社区怎么看'、'国内厂商'、\n"
+                    "                          '中文行业研报'、'微信文章'。\n"
+                    "  • engine='brave'      — 想要独立索引（避开 Google/Bing 偏见，挖长尾英文站、\n"
+                    "                          技术文档、被 SEO 污染的话题用 Brave 更干净）。\n"
+                    "  • engine='tavily'     — 想要 LLM 友好的 answer 摘要 + 通用召回；\n"
+                    "                          可加 search_depth='advanced' 提质。\n"
+                    "  • engine='exa'        — 神经/语义检索：'找类似的博客'、'与这篇论文最相关的工作'、\n"
+                    "                          关键词难以命中但语义清楚的场景。\n"
+                    "  • engine='search1api' — Google/Bing 元搜索聚合，前面三家都漏时再用。\n"
+                    "  • engine='duckduckgo' — 无 key 兜底，正常情况不要选。\n"
+                    "\n"
+                    "若结果稀疏或单一视角，**不要循环重试**，要么换 engine 试不同索引，要么升级到 deep_research。"
                 ),
                 input_schema={
                     "type": "object",
@@ -1582,19 +1588,23 @@ def _engine_available(name: str) -> bool:
 
 
 def _route_engines(query: str) -> list[str]:
-    """auto 模式下根据 query 特征挑 2–3 个最契合的引擎，避免无脑全跑。"""
+    """auto 模式：默认 Tavily + Brave + Bocha 全跑（覆盖中英文双向），
+    不再做 zh/en/mixed 分流——因为"实体国别 ≠ 信息所在地"，分流容易漏一手数据
+    （比如 BYD 的海外销量一手在英文，NVIDIA 的中文行情在 Bocha）。
+
+    只保留两个**功能性**触发器：
+    - neural query（"similar to / find papers / 类似"）→ 改用 Exa+Tavily+Brave，
+      因为这类问题靠语义检索而不是关键词
+    - news query（"最新/2026/breaking"）→ 不变 Tavily+Brave+Bocha，但
+      Tavily 内部会给时效加权
+    其他场景统统三家并跑，让 agent 拿到尽可能完整的视角。
+    若用户想限定单一视角，应在 web_search 调用里显式指定 engine。
+    """
     if _is_neural_query(query):
-        # "找类似/相关研究" → Exa 神经 + Tavily 摘要
         plan = ["exa", "tavily", "brave"]
-    elif _is_chinese_query(query):
-        # 中文 query → 博查抓中文站 + Tavily 兜全局
-        plan = ["bocha", "tavily", "brave"]
-    elif _is_news_query(query):
-        # 时效性 → Tavily(answer 含时间) + Brave + Bocha
-        plan = ["tavily", "brave", "bocha"]
     else:
-        # 默认英文/通用 → Tavily + Brave + Exa
-        plan = ["tavily", "brave", "exa"]
+        # 默认 + news 都走这条：覆盖 中文 + 英文 + 独立索引
+        plan = ["tavily", "brave", "bocha"]
 
     available = [name for name in plan if _engine_available(name)]
     if not available:

@@ -378,7 +378,7 @@ SSE 连接使用 `Connection: close` 并在服务端强制 `self.close_connectio
 
 | 工具 | 用途 | 说明 |
 | --- | --- | --- |
-| `web_search` | 联网搜索（智能多引擎） | `engine=auto`（默认）按 query 特征智能路由：中文 → Bocha + Tavily + Brave；neural / 找类似研究 → Exa + Tavily + Brave；时效新闻 → Tavily + Brave + Bocha；默认 → Tavily + Brave + Exa。结果按 URL 去重，多源命中加权置顶。可显式指定 `engine` 为 `tavily/brave/bocha/exa/search1api/duckduckgo` |
+| `web_search` | 联网搜索（多引擎） | `engine=auto`（默认）并跑 **Tavily + Brave + Bocha** 三家，覆盖中英文双向；只有 neural 触发（"similar to / 类似 / 相关研究"）才换成 Exa + Tavily + Brave。结果按 URL 去重，多源命中加权置顶。可显式指定 `engine` 为 `tavily/brave/bocha/exa/search1api/duckduckgo`，agent 应在用户对"信息所在地"有明确倾向时主动 override |
 | `web_fetch` | 抓取网页正文 | 优先 Jina Reader（`r.jina.ai`，直出 markdown，SPA / JS 渲染页也能解析），失败回退到 BeautifulSoup 抽正文 |
 | `deep_research` | 深度研究 | Jina DeepSearch（迭代 search→read→reason，直接产出带引用的研究答案 + visited URLs 列表）；Jina 不可用时回退到"多引擎搜索 + Reader 抓 top N 篇正文"。**取代了原来的 `web_search_and_read`** |
 | `paper_search` | 学术论文检索 | 通过 OpenAlex 检索论文，返回标题、作者、年份、venue、DOI、被引数、开放获取链接、摘要，以及 `inline_citation` / `reference_text` 这类引用友好字段；适合论文、综述、related work、参考文献任务 |
@@ -391,6 +391,18 @@ SSE 连接使用 `Connection: close` 并在服务端强制 `self.close_connectio
 - 已知具体网页链接：`web_fetch`（Jina Reader 输出 markdown）
 - 开放式研究问题（"帮我研究 X 方向"，需要带引用的成文段落）：`deep_research`
 - 涉及论文、文献综述、参考文献：优先 `paper_search`
+
+### 路由策略：默认覆盖 + agent 主动 override
+
+经过几次迭代后，最终方案是**不再按 query 语种猜路由**——因为"实体国别 ≠ 信息所在地"，按猜分流极易漏一手数据：
+
+- "比亚迪海外销量" → 实体国内，但一手在英文（BYD IR、JATO、InsideEVs）
+- "NVIDIA H100 中国行情价" → 实体海外，但一手在中文社区
+- 实体国别这一层**不可靠**
+
+所以 `auto` 默认就并跑 **Tavily + Brave + Bocha** 三家，覆盖中英文双向。决定走哪个引擎的责任**让 agent 来承担**——它见过的语料知道"BYD 海外销量在哪"，比正则路由器准。工具描述与 [TOOLS.md](workplace/runtime/TOOLS.md) 里给了 agent 明确的"什么时候应该 override engine"决策表。
+
+只有 neural query（语义/类似查找）才打破默认：触发词命中后切到 `Exa + Tavily + Brave`，因为这类问题本质上靠语义检索而不是关键词。
 
 ### 各引擎分工
 
