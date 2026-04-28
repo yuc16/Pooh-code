@@ -113,6 +113,33 @@ output/<session_id>/
 
 **不要循环重跑同一个 engine 想拼出更多结果**——结果稀疏时要么换 engine 验证（`brave` ↔ `tavily` 是常用组合），要么升级到 `deep_research`。
 
+#### query 语言决定召回，比 engine 选择更重要
+
+所有搜索引擎（包括 Tavily/Brave/Bocha）都会**主动把和 query 语言匹配的结果排到前面**——这是它们计算相关度的标准行为，不是 bug。所以：
+
+- 中文 query → 即便你跑了 Tavily + Brave，召回的也大概率是中文媒体的转译稿，而不是英文一手数据
+- 英文 query → 即便配了 Bocha，结果里也很难看到中文公众号深度分析
+
+**结论：要拿到目标语种的一手资料，必须用目标语种重写 query，不能指望 engine 选择解决。**
+
+什么时候需要重写：
+
+| 用户原问题（用户的母语） | 你应该额外发的 query | 为什么 |
+| --- | --- | --- |
+| "比亚迪海外销量 2025" | 再发一次 `BYD overseas sales 2025` | 一手数据在英文（BYD IR、JATO Dynamics、InsideEVs） |
+| "Notion 在中国市场怎么推广的" | 再发一次 `Notion China go-to-market strategy` | 总部决策类信息英文一手 |
+| "Anthropic 中国区策略" | 双发：原中文 + `Anthropic China strategy` | 中英两边都有重要信息 |
+| "OpenAI 最新 API 更新" | 直接用 `OpenAI API changelog 2026` | 一手在 openai.com 英文站 |
+| "ESG 上市公司国内新规" | 保持中文不动 | 政策类一手就在中文 |
+
+具体做法：
+
+1. **先判断"这条问题的一手信息在哪个语种"**——和实体国别无关，看具体问题
+2. **如果一手在英文**：直接用英文 query 调 `web_search`；可以再补一发原中文 query 兜中文社区视角
+3. **如果一手在中文**：用中文 query；显式 `engine="bocha"` 强化中文社区召回
+4. **不确定时**：双发，原 query + 翻译版，结果合并阅读
+5. 重写翻译时，**保留专有名词原拼写**（人名、产品名、公司名），不要硬翻成中文音译——`BYD` 不要写成 `比亚迪`，`H100` 不要写成 `H一百`
+
 ## 技能使用规则
 
 当用户意图明显匹配某个 skill 描述时，应先调用：
